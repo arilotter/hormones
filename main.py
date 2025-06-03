@@ -252,14 +252,59 @@ def create_hormone_graph():
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
 
+    # Calculate ratio of actual to expected estradiol
+    actual_to_expected_ratios = []
+    ratio_dates = []
+
     # Desired ranges (hardcoded - adjust these values as needed)
     estradiol_range = (100, 200)  # pg/mL
     testosterone_range = (10, 50)  # ng/dL
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12), sharex=True)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
     fig.suptitle(
         "Ari's Hormone Levels and Dosage Over Time", fontsize=16, fontweight="bold"
     )
+
+    for _, row in df_with_data.iterrows():
+        if pd.notna(row["estradiol"]):
+            # Find expected value for this date
+            target_date = row["date"]
+            closest_idx = min(
+                range(len(expected_curve_dates)),
+                key=lambda i: abs(
+                    (expected_curve_dates[i] - target_date).total_seconds()
+                ),
+            )
+            expected_value = expected_curve_values[closest_idx]
+            ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
+
+            annotation_text = (
+                f"E2: {row['estradiol']:.0f}\nTheory: {expected_value:.0f}"
+            )
+            ax1.annotate(
+                annotation_text,
+                xy=(row["date"], row["estradiol"]),
+                xytext=(0, 10),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
+            )
+
+            actual_to_expected_ratios.append(ratio)
+            ratio_dates.append(target_date)
+
+        if pd.notna(row["testosterone"]):
+            annotation_text = f"T: {row['testosterone']:.1f}"
+            ax2.annotate(
+                annotation_text,
+                xy=(row["date"], row["testosterone"]),
+                xytext=(0, 10),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
+            )
 
     # Plot expected estradiol curve
     if expected_curve_dates and expected_curve_values:
@@ -356,8 +401,46 @@ def create_hormone_graph():
     ax3.grid(True, alpha=0.3)
     ax3.set_ylim(bottom=0)  # Start y-axis at 0 for dosage
 
+    # Plot Actual/Expected Ratio
+    if ratio_dates and actual_to_expected_ratios:
+        ax4.plot(
+            ratio_dates,
+            actual_to_expected_ratios,
+            "o-",
+            color="purple",
+            linewidth=2,
+            markersize=6,
+            label="Actual/Expected Ratio",
+        )
+
+        # Add horizontal line at ratio = 1.0 (perfect match)
+        ax4.axhline(
+            y=1.0, color="gray", linestyle="-", alpha=0.5, label="Perfect Match"
+        )
+
+        # Add shaded region for reasonable variation (e.g., ±20%)
+        ax4.axhspan(0.8, 1.2, alpha=0.2, color="gray", label="±20% Range")
+
+        # Add ratio values as text annotations
+        for date, ratio in zip(ratio_dates, actual_to_expected_ratios):
+            ax4.annotate(
+                f"{ratio:.2f}",
+                xy=(date, ratio),
+                xytext=(0, 10),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
+            )
+
+    ax4.set_ylabel("Ratio", fontweight="bold")
+    ax4.set_title("Actual vs Expected Estradiol Ratio")
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    ax4.set_ylim(bottom=0)  # Start y-axis at 0
+
     # Add injection schedule markers to all plots
-    for ax in [ax1, ax2, ax3]:
+    for ax in [ax1, ax2, ax3, ax4]:
         # Trough markers (injection days)
         for date in injection_schedule["trough"]:
             ax.axvline(x=date, color="gray", linestyle="--", alpha=0.5, linewidth=1)
@@ -376,12 +459,11 @@ def create_hormone_graph():
         note_text = row["notes"]
 
         # Add vertical line for notes
-        for ax in [ax1, ax2, ax3]:
+        for ax in [ax1, ax2, ax3, ax4]:
             ax.axvline(
                 x=note_date, color="black", linestyle="-", alpha=0.7, linewidth=2
             )
 
-        # Add note text to the top plot
         ax1.annotate(
             note_text,
             xy=(note_date, (ax1.get_ylim()[1] - ax1.get_ylim()[0]) / 2),
@@ -405,16 +487,15 @@ def create_hormone_graph():
     fig.legend(handles=legend_elements, loc="center right", bbox_to_anchor=(1.15, 0.5))
 
     # Format x-axis
-    ax3.set_xlabel("Date", fontweight="bold")
-    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-    ax3.xaxis.set_major_locator(mdates.WeekdayLocator())
+    ax4.set_xlabel("Date", fontweight="bold")
+    ax4.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    ax4.xaxis.set_major_locator(mdates.WeekdayLocator())
     plt.xticks(rotation=45)
 
-    # Adjust layout
     plt.tight_layout()
     plt.subplots_adjust(right=0.85)
 
-    return fig, (ax1, ax2, ax3)
+    return fig, (ax1, ax2, ax3, ax4)
 
 
 # Create and display the graph
