@@ -1,0 +1,1 @@
+nix-shell -p "python312.withPackages (pkgs: with pkgs; [ numpy pandas matplotlib ])"
