@@ -48,6 +48,13 @@ hormone_data = [
         "dosage": None,
         "notes": None,
     },
+    {
+        "date": "2025-06-05",
+        "estradiol": 117,
+        "testosterone": 16,
+        "dosage": None,
+        "notes": None,
+    },
 ]
 
 
@@ -257,8 +264,10 @@ def create_hormone_graph():
     ratio_dates = []
 
     # Desired ranges (hardcoded - adjust these values as needed)
-    estradiol_range = (100, 200)  # pg/mL
-    testosterone_range = (10, 50)  # ng/dL
+    desired_estradiol_range = (100, 200)  # pg/mL
+    desired_testosterone_range = (10, 50)  # ng/dL
+    cis_man_estradiol_range = (0, 43.3)  # pg/mL
+    cis_man_testosterone_range = (219, 905)  # ng/dL
 
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
     fig.suptitle(
@@ -327,11 +336,18 @@ def create_hormone_graph():
         label="Estradiol",
     )
     ax1.axhspan(
-        estradiol_range[0],
-        estradiol_range[1],
+        desired_estradiol_range[0],
+        desired_estradiol_range[1],
         alpha=0.2,
         color="red",
         label="Desired Range",
+    )
+    ax1.axhspan(
+        cis_man_estradiol_range[0],
+        cis_man_estradiol_range[1],
+        alpha=0.2,
+        color="yellow",
+        label="Cis Man Range",
     )
     ax1.set_ylabel("Estradiol (pg/mL)", fontweight="bold")
     ax1.set_title("Estradiol Levels")
@@ -349,8 +365,15 @@ def create_hormone_graph():
         label="Testosterone",
     )
     ax2.axhspan(
-        testosterone_range[0],
-        testosterone_range[1],
+        cis_man_testosterone_range[0],
+        cis_man_testosterone_range[1],
+        alpha=0.2,
+        color="red",
+        label="Cis Man Range",
+    )
+    ax2.axhspan(
+        desired_testosterone_range[0],
+        desired_testosterone_range[1],
         alpha=0.2,
         color="blue",
         label="Desired Range",
