@@ -39,7 +39,7 @@ hormone_data = [
         "estradiol": None,
         "testosterone": None,
         "dosage": 8,
-        "notes": "dosage increase",
+        "notes": "dosage increase, 20mg/ml vials",
     },
     {
         "date": "2025-06-02",
@@ -54,6 +54,26 @@ hormone_data = [
         "testosterone": 16,
         "dosage": None,
         "notes": None,
+    },
+    {
+        "date": "2025-06-07",
+        "estradiol": 1522,
+        "testosterone": 2.1,
+        "dosage": None,
+        "notes": None,
+    },
+    {
+        "date": "2025-06-12",
+        "estradiol": None,
+        "testosterone": None,
+        "dosage": None,
+        "notes": "switched pharmacy, 10mg/ml vials",
+    },  {
+        "date": "2025-06-12",
+        "estradiol": 122,
+        "testosterone": 19.6,
+        "dosage": None,
+        "notes":  None
     },
 ]
 
