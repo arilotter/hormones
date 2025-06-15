@@ -143,6 +143,30 @@ def generate_injection_schedule(start_date, num_weeks=12):
     return schedule
 
 
+def categorize_bloodwork_by_cycle(date_str, start_date="2025-04-17"):
+    """Categorize a bloodwork date as peak, mid, or trough based on weekly injection cycle"""
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    test_dt = datetime.strptime(date_str, "%Y-%m-%d")
+    
+    # Calculate days since start
+    days_since_start = (test_dt - start_dt).days
+    
+    # Find position in weekly cycle (0-6)
+    cycle_day = days_since_start % 7
+    
+    # Categorize based on cycle day
+    # Day 0: Trough (injection day)
+    # Day 1-3: Peak period (closest to day 2)
+    # Day 4-6: Mid period (closest to day 4, approaching next trough)
+    
+    if cycle_day == 0:
+        return "trough"
+    elif 1 <= cycle_day <= 3:
+        return "peak"
+    else:  # 4 <= cycle_day <= 6
+        return "mid"
+
+
 def ev_model_3c(t, dose):
     """
     Estradiol valerate 3-compartment model using parameters from JS model
@@ -270,6 +294,10 @@ def create_hormone_graph():
 
     # Filter out rows with no hormone data for plotting
     df_with_data = df.dropna(subset=["estradiol", "testosterone"])
+    
+    # Add cycle categorization for bloodwork results
+    df_with_data = df_with_data.copy()
+    df_with_data["cycle_category"] = df_with_data["date"].dt.strftime("%Y-%m-%d").apply(categorize_bloodwork_by_cycle)
 
     # Prepare dosage data
     dosage_dates, dosage_values = prepare_dosage_data(df)
@@ -294,7 +322,15 @@ def create_hormone_graph():
         "Ari's Hormone Levels and Dosage Over Time", fontsize=16, fontweight="bold"
     )
 
+    # Define colors and markers for cycle categories
+    cycle_colors = {"trough": "darkred", "peak": "red", "mid": "orange"}
+    cycle_markers = {"trough": "v", "peak": "^", "mid": "o"}
+
     for _, row in df_with_data.iterrows():
+        cycle_cat = row["cycle_category"]
+        color = cycle_colors[cycle_cat]
+        marker = cycle_markers[cycle_cat]
+        
         if pd.notna(row["estradiol"]):
             # Find expected value for this date
             target_date = row["date"]
@@ -308,7 +344,7 @@ def create_hormone_graph():
             ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
 
             annotation_text = (
-                f"E2: {row['estradiol']:.0f}\nTheory: {expected_value:.0f}"
+                f"{row['estradiol']:.0f} ({cycle_cat})\nTheory: {expected_value:.0f}"
             )
             ax1.annotate(
                 annotation_text,
@@ -324,7 +360,7 @@ def create_hormone_graph():
             ratio_dates.append(target_date)
 
         if pd.notna(row["testosterone"]):
-            annotation_text = f"T: {row['testosterone']:.1f}"
+            annotation_text = f"{row['testosterone']:.1f} ({cycle_cat})"
             ax2.annotate(
                 annotation_text,
                 xy=(row["date"], row["testosterone"]),
@@ -346,15 +382,51 @@ def create_hormone_graph():
             label="Expected E2 (EV model)",
         )
 
+    # Plot estradiol points by cycle category
+    for cycle_cat in ["trough", "peak", "mid"]:
+        cycle_data = df_with_data[df_with_data["cycle_category"] == cycle_cat]
+        if not cycle_data.empty:
+            ax1.scatter(
+                cycle_data["date"],
+                cycle_data["estradiol"],
+                color=cycle_colors[cycle_cat],
+                marker=cycle_markers[cycle_cat],
+                s=80,
+                label=f"Estradiol ({cycle_cat})",
+                zorder=5
+            )
+            
+            ax2.scatter(
+                cycle_data["date"],
+                cycle_data["testosterone"],
+                color=cycle_colors[cycle_cat],
+                marker=cycle_markers[cycle_cat],
+                s=80,
+                label=f"Testosterone ({cycle_cat})",
+                zorder=5
+            )
+
+    # Connect points with lines for continuity
     ax1.plot(
         df_with_data["date"],
         df_with_data["estradiol"],
-        "o-",
-        color="red",
-        linewidth=2,
-        markersize=6,
-        label="Estradiol",
+        "-",
+        color="gray",
+        linewidth=1,
+        alpha=0.5,
+        zorder=1
     )
+    
+    ax2.plot(
+        df_with_data["date"],
+        df_with_data["testosterone"],
+        "-",
+        color="gray",
+        linewidth=1,
+        alpha=0.5,
+        zorder=1
+    )
+
     ax1.axhspan(
         desired_estradiol_range[0],
         desired_estradiol_range[1],
@@ -370,20 +442,11 @@ def create_hormone_graph():
         label="Cis Man Range",
     )
     ax1.set_ylabel("Estradiol (pg/mL)", fontweight="bold")
-    ax1.set_title("Estradiol Levels")
+    ax1.set_title("Estradiol Levels by Injection Cycle Position")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
     # Plot Testosterone
-    ax2.plot(
-        df_with_data["date"],
-        df_with_data["testosterone"],
-        "o-",
-        color="blue",
-        linewidth=2,
-        markersize=6,
-        label="Testosterone",
-    )
     ax2.axhspan(
         cis_man_testosterone_range[0],
         cis_man_testosterone_range[1],
@@ -399,7 +462,7 @@ def create_hormone_graph():
         label="Desired Range",
     )
     ax2.set_ylabel("Testosterone (ng/dL)", fontweight="bold")
-    ax2.set_title("Testosterone Levels")
+    ax2.set_title("Testosterone Levels by Injection Cycle Position")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
@@ -543,5 +606,28 @@ def create_hormone_graph():
 
 # Create and display the graph
 if __name__ == "__main__":
+    # Print cycle categorization for all bloodwork results
+    print("Bloodwork Results by Injection Cycle Position:")
+    print("=" * 50)
+    
+    converted_data = convert_hormone_data(hormone_data)
+    df = pd.DataFrame(converted_data)
+    df["date"] = pd.to_datetime(df["date"])
+    df_with_data = df.dropna(subset=["estradiol", "testosterone"])
+    
+    for _, row in df_with_data.iterrows():
+        date_str = row["date"].strftime("%Y-%m-%d")
+        cycle_cat = categorize_bloodwork_by_cycle(date_str)
+        
+        # Calculate days since start for reference
+        start_dt = datetime.strptime("2025-04-17", "%Y-%m-%d")
+        test_dt = row["date"]
+        days_since_start = (test_dt - start_dt).days
+        cycle_day = days_since_start % 7
+        
+        print(f"{date_str}: {cycle_cat.upper()} (cycle day {cycle_day})")
+        print(f"  E2: {row['estradiol']:.0f} pg/mL, T: {row['testosterone']:.1f} ng/dL")
+        print()
+    
     fig, axes = create_hormone_graph()
     plt.savefig("hormone_levels.png", dpi=300, bbox_inches="tight")
