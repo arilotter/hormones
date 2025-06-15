@@ -343,46 +343,130 @@ def generate_scaled_weekly_curves(df):
         all_week_data = pd.concat([week_data, next_week_trough], ignore_index=True)
         
         if not all_week_data.empty:
-            # Calculate scaling factor and baseline offset based on actual vs predicted values
-            actual_values = []
-            predicted_values = []
-            trough_baseline = 0  # Will store the actual trough level for this cycle
+            # Separate measurements by type for better curve fitting
+            peak_measurements = []
+            end_trough_measurements = []
+            other_measurements = []
+            trough_baseline = 0
             
             for _, data_row in all_week_data.iterrows():
                 # For trough measurements from next week, treat them as day 7 of current week
                 if data_row["cycle_category"] == "trough" and data_row["date"] >= next_week_start:
                     days_since_injection = 7.0
+                    end_trough_measurements.append((days_since_injection, data_row["estradiol"]))
                 else:
                     days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
-                
-                # Store trough baseline (injection day measurement)
-                if days_since_injection < 0.1:  # Very close to injection time
-                    trough_baseline = data_row["estradiol"]
-                    continue
-                
-                predicted_val = ev_model_3c(days_since_injection, dose)
-                
-                actual_values.append(data_row["estradiol"])
-                predicted_values.append(predicted_val)
+                    
+                    if days_since_injection < 0.1:  # Injection day trough
+                        trough_baseline = data_row["estradiol"]
+                    elif data_row["cycle_category"] == "peak":
+                        peak_measurements.append((days_since_injection, data_row["estradiol"]))
+                    else:
+                        other_measurements.append((days_since_injection, data_row["estradiol"]))
             
-            # Calculate scaling factor (average ratio of actual to predicted)
-            if predicted_values and all(p > 0 for p in predicted_values):
-                scaling_factors = [a/p for a, p in zip(actual_values, predicted_values)]
-                avg_scaling = sum(scaling_factors) / len(scaling_factors)
+            # If we have both peak and end trough, try to fit with time scaling
+            if peak_measurements and end_trough_measurements:
+                peak_day, peak_actual = peak_measurements[0]  # Take first peak
+                end_day, end_trough_actual = end_trough_measurements[0]  # Take first end trough
                 
-                # Scale and shift the weekly curve
-                # Add baseline to account for residual hormone levels at trough
-                scaled_week_values = [v * avg_scaling + trough_baseline for v in week_values]
+                # Find the optimal time scaling factor
+                best_time_scale = 1.0
+                best_fit_error = float('inf')
+                
+                # Try different time scaling factors
+                for time_scale in [x/10.0 for x in range(5, 30)]:  # 0.5 to 3.0
+                    # Scale the theoretical curve timing
+                    scaled_peak_day = peak_day / time_scale
+                    scaled_end_day = end_day / time_scale
+                    
+                    # Get theoretical values at scaled times
+                    theoretical_peak = ev_model_3c(scaled_peak_day, dose)
+                    theoretical_end = ev_model_3c(scaled_end_day, dose)
+                    
+                    if theoretical_peak > 0 and theoretical_end > 0:
+                        # Calculate vertical scaling needed to match peak
+                        vertical_scale = (peak_actual - trough_baseline) / theoretical_peak
+                        
+                        # Predict what the end trough should be with this scaling
+                        predicted_end_trough = theoretical_end * vertical_scale + trough_baseline
+                        
+                        # Calculate error between predicted and actual end trough
+                        error = abs(predicted_end_trough - end_trough_actual)
+                        
+                        if error < best_fit_error:
+                            best_fit_error = error
+                            best_time_scale = time_scale
+                
+                # Generate curve with optimal time scaling
+                week_times = []
+                week_values = []
+                
+                # Calculate vertical scaling based on peak with optimal time scaling
+                scaled_peak_day = peak_day / best_time_scale
+                theoretical_peak = ev_model_3c(scaled_peak_day, dose)
+                vertical_scale = (peak_actual - trough_baseline) / theoretical_peak if theoretical_peak > 0 else 1.0
+                
+                for hour in range(0, 7*24, 6):  # Every 6 hours for 7 days
+                    days = hour / 24.0
+                    scaled_days = days / best_time_scale  # Apply time scaling
+                    week_times.append(injection_date + pd.Timedelta(days=days))
+                    theoretical_val = ev_model_3c(scaled_days, dose)
+                    scaled_val = theoretical_val * vertical_scale + trough_baseline
+                    week_values.append(scaled_val)
                 
                 scaled_curves.append({
                     'times': week_times,
-                    'values': scaled_week_values,
+                    'values': week_values,
                     'injection_date': injection_date,
-                    'scaling_factor': avg_scaling,
+                    'vertical_scaling': vertical_scale,
+                    'time_scaling': best_time_scale,
                     'baseline_offset': trough_baseline,
                     'actual_points': all_week_data,
-                    'week_number': week_number
+                    'week_number': week_number,
+                    'fit_error': best_fit_error
                 })
+                
+            else:
+                # Fallback to original method if we don't have both peak and end trough
+                actual_values = []
+                predicted_values = []
+                
+                for _, data_row in all_week_data.iterrows():
+                    if data_row["cycle_category"] == "trough" and data_row["date"] >= next_week_start:
+                        days_since_injection = 7.0
+                    else:
+                        days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
+                    
+                    if days_since_injection < 0.1:  # Skip injection day
+                        continue
+                    
+                    predicted_val = ev_model_3c(days_since_injection, dose)
+                    actual_values.append(data_row["estradiol"])
+                    predicted_values.append(predicted_val)
+                
+                if predicted_values and all(p > 0 for p in predicted_values):
+                    scaling_factors = [a/p for a, p in zip(actual_values, predicted_values)]
+                    avg_scaling = sum(scaling_factors) / len(scaling_factors)
+                    
+                    # Generate standard scaled curve
+                    week_times = []
+                    week_values = []
+                    
+                    for hour in range(0, 7*24, 6):
+                        days = hour / 24.0
+                        week_times.append(injection_date + pd.Timedelta(days=days))
+                        week_values.append(ev_model_3c(days, dose) * avg_scaling + trough_baseline)
+                    
+                    scaled_curves.append({
+                        'times': week_times,
+                        'values': week_values,
+                        'injection_date': injection_date,
+                        'vertical_scaling': avg_scaling,
+                        'time_scaling': 1.0,
+                        'baseline_offset': trough_baseline,
+                        'actual_points': all_week_data,
+                        'week_number': week_number
+                    })
     
     return scaled_curves
 
