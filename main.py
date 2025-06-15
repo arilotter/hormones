@@ -261,7 +261,7 @@ def generate_ev_expected_curve(df):
         return valid_dosages.iloc[-1]["dosage_filled"]
 
     # Generate time points for curve
-    date_range = pd.date_range(start=start_date, end=end_date, freq="6H")
+    date_range = pd.date_range(start=start_date, end=end_date, freq="6h")
     expected_values = []
 
     for current_date in date_range:
@@ -285,6 +285,80 @@ def generate_ev_expected_curve(df):
     return date_range.tolist(), expected_values
 
 
+def generate_scaled_weekly_curves(df):
+    """Generate weekly curves scaled to match actual data points"""
+    start_date = pd.to_datetime("2025-04-17")
+    
+    # Get actual data points with hormone values
+    df_with_data = df.dropna(subset=["estradiol", "testosterone"]).copy()
+    df_with_data["cycle_category"] = df_with_data["date"].dt.strftime("%Y-%m-%d").apply(categorize_bloodwork_by_cycle)
+    
+    scaled_curves = []
+    
+    # Find all unique weeks that contain data
+    weeks_with_data = set()
+    for _, row in df_with_data.iterrows():
+        test_date = row["date"]
+        days_since_start = (test_date - start_date).days
+        week_number = days_since_start // 7
+        weeks_with_data.add(week_number)
+    
+    # Process each week that has data
+    for week_number in sorted(weeks_with_data):
+        injection_date = start_date + pd.Timedelta(weeks=week_number)
+        
+        # Get dosage for this injection
+        dose = 6  # Default
+        dosage_changes = df[df["dosage"].notna() & (df["date"] <= injection_date)]
+        if not dosage_changes.empty:
+            dose = dosage_changes.iloc[-1]["dosage"]
+        
+        # Generate theoretical curve for this week (7 days)
+        week_times = []
+        week_values = []
+        
+        for hour in range(0, 7*24, 6):  # Every 6 hours for 7 days
+            days = hour / 24.0
+            week_times.append(injection_date + pd.Timedelta(days=days))
+            week_values.append(ev_model_3c(days, dose))
+        
+        # Find actual data points in this week
+        week_start = injection_date
+        week_end = injection_date + pd.Timedelta(days=7)
+        week_data = df_with_data[(df_with_data["date"] >= week_start) & (df_with_data["date"] < week_end)]
+        
+        if not week_data.empty:
+            # Calculate scaling factor based on actual vs predicted values
+            actual_values = []
+            predicted_values = []
+            
+            for _, data_row in week_data.iterrows():
+                days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
+                predicted_val = ev_model_3c(days_since_injection, dose)
+                
+                actual_values.append(data_row["estradiol"])
+                predicted_values.append(predicted_val)
+            
+            # Calculate scaling factor (average ratio of actual to predicted)
+            if predicted_values and all(p > 0 for p in predicted_values):
+                scaling_factors = [a/p for a, p in zip(actual_values, predicted_values)]
+                avg_scaling = sum(scaling_factors) / len(scaling_factors)
+                
+                # Scale the weekly curve
+                scaled_week_values = [v * avg_scaling for v in week_values]
+                
+                scaled_curves.append({
+                    'times': week_times,
+                    'values': scaled_week_values,
+                    'injection_date': injection_date,
+                    'scaling_factor': avg_scaling,
+                    'actual_points': week_data,
+                    'week_number': week_number
+                })
+    
+    return scaled_curves
+
+
 def create_hormone_graph():
     converted_data = convert_hormone_data(hormone_data)
 
@@ -306,6 +380,9 @@ def create_hormone_graph():
     injection_schedule = generate_injection_schedule("2025-04-17")
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
+    
+    # Generate scaled weekly curves
+    scaled_curves = generate_scaled_weekly_curves(df)
 
     # Calculate ratio of actual to expected estradiol
     actual_to_expected_ratios = []
@@ -317,13 +394,13 @@ def create_hormone_graph():
     cis_man_estradiol_range = (0, 43.3)  # pg/mL
     cis_man_testosterone_range = (219, 905)  # ng/dL
 
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15))
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(25, 15))
     fig.suptitle(
         "Ari's Hormone Levels and Dosage Over Time", fontsize=16, fontweight="bold"
     )
 
     # Define colors and markers for cycle categories
-    cycle_colors = {"trough": "darkred", "peak": "red", "mid": "orange"}
+    cycle_colors = {"trough": "darkred", "peak": "green", "mid": "orange"}
     cycle_markers = {"trough": "v", "peak": "^", "mid": "o"}
 
     for _, row in df_with_data.iterrows():
@@ -379,64 +456,65 @@ def create_hormone_graph():
             linewidth=2,
             label="Expected E2 (EV model)",
         )
+    
+    # Plot scaled weekly curves
+    for curve in scaled_curves:
+        ax1.plot(
+            curve['times'],
+            curve['values'],
+            "--",
+            color="blue",
+            linewidth=2,
+            label="Scaled weekly curve" if curve == scaled_curves[0] else ""
+        )
 
-    # Plot estradiol points by cycle category
+    # Plot points by cycle category
     for cycle_cat in ["trough", "peak", "mid"]:
         cycle_data = df_with_data[df_with_data["cycle_category"] == cycle_cat]
         if not cycle_data.empty:
-            ax1.scatter(
-                cycle_data["date"],
-                cycle_data["estradiol"],
+            # Sort by date for proper line connections
+            cycle_data_sorted = cycle_data.sort_values("date")
+            
+            # Plot points and connecting lines for each category
+            ax1.plot(
+                cycle_data_sorted["date"],
+                cycle_data_sorted["estradiol"],
+                "-",
                 color=cycle_colors[cycle_cat],
                 marker=cycle_markers[cycle_cat],
-                s=80,
+                markersize=8,
+                linewidth=2,
                 label=f"Estradiol ({cycle_cat})",
                 zorder=5
             )
             
-            ax2.scatter(
-                cycle_data["date"],
-                cycle_data["testosterone"],
+            # Plot testosterone with separate trend lines
+            ax2.plot(
+                cycle_data_sorted["date"],
+                cycle_data_sorted["testosterone"],
+                "-",
                 color=cycle_colors[cycle_cat],
                 marker=cycle_markers[cycle_cat],
-                s=80,
+                markersize=8,
+                linewidth=2,
                 label=f"Testosterone ({cycle_cat})",
                 zorder=5
             )
 
-    # Connect points with lines for continuity
-    ax1.plot(
-        df_with_data["date"],
-        df_with_data["estradiol"],
-        "-",
-        color="gray",
-        linewidth=1,
-        alpha=0.5,
-        zorder=1
-    )
-    
-    ax2.plot(
-        df_with_data["date"],
-        df_with_data["testosterone"],
-        "-",
-        color="gray",
-        linewidth=1,
-        alpha=0.5,
-        zorder=1
-    )
+    # Remove the overall connecting line for testosterone (we now have category-specific lines)
 
     ax1.axhspan(
         desired_estradiol_range[0],
         desired_estradiol_range[1],
         alpha=0.2,
-        color="red",
+        color="blue",
         label="Desired Range",
     )
     ax1.axhspan(
         cis_man_estradiol_range[0],
         cis_man_estradiol_range[1],
         alpha=0.2,
-        color="yellow",
+        color="red",
         label="Cis Man Range",
     )
     ax1.set_ylabel("Estradiol (pg/mL)", fontweight="bold")
@@ -545,17 +623,9 @@ def create_hormone_graph():
 
     # Add injection schedule markers to all plots
     for ax in [ax1, ax2, ax3, ax4]:
-        # Trough markers (injection days)
-        for date in injection_schedule["trough"]:
-            ax.axvline(x=date, color="gray", linestyle="--", alpha=0.5, linewidth=1)
-
-        # Peak markers (2 days after injection)
-        for date in injection_schedule["peak"]:
-            ax.axvline(x=date, color="orange", linestyle=":", alpha=0.5, linewidth=1)
-
-        # Mid markers (4 days after injection)
-        for date in injection_schedule["mid"]:
-            ax.axvline(x=date, color="purple", linestyle="-.", alpha=0.5, linewidth=1)
+        for kind, dates in injection_schedule.items():
+            for date in dates:
+                ax.axvline(x=date, color=cycle_colors[kind], linestyle="--", alpha=0.5, linewidth=1)
 
     # Add notes with vertical lines
     for _, row in df[df["notes"].notna()].iterrows():
@@ -581,10 +651,10 @@ def create_hormone_graph():
 
     legend_elements = [
         plt.Line2D(
-            [0], [0], color="gray", linestyle="--", label="Trough (Injection Day)"
+            [0], [0], color="darkred", linestyle="--", label="Trough (Injection Day)"
         ),
-        plt.Line2D([0], [0], color="orange", linestyle=":", label="Peak (Day +2)"),
-        plt.Line2D([0], [0], color="purple", linestyle="-.", label="Mid (Day +4)"),
+        plt.Line2D([0], [0], color="red", linestyle=":", label="Peak (Day +2)"),
+        plt.Line2D([0], [0], color="orange", linestyle="-.", label="Mid (Day +4)"),
         plt.Line2D([0], [0], color="black", linestyle="-", alpha=0.7, label="Notes"),
     ]
 
@@ -631,3 +701,4 @@ if __name__ == "__main__":
     
     fig, axes = create_hormone_graph()
     plt.savefig("hormone_levels.png", dpi=300, bbox_inches="tight")
+    print("graph generated!")
