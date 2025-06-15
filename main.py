@@ -302,6 +302,10 @@ def generate_scaled_weekly_curves(df):
         days_since_start = (test_date - start_date).days
         week_number = days_since_start // 7
         weeks_with_data.add(week_number)
+        
+        # If this is a trough measurement, also add it to the previous week
+        if row["cycle_category"] == "trough" and week_number > 0:
+            weeks_with_data.add(week_number - 1)
     
     # Process each week that has data
     for week_number in sorted(weeks_with_data):
@@ -327,13 +331,35 @@ def generate_scaled_weekly_curves(df):
         week_end = injection_date + pd.Timedelta(days=7)
         week_data = df_with_data[(df_with_data["date"] >= week_start) & (df_with_data["date"] < week_end)]
         
-        if not week_data.empty:
-            # Calculate scaling factor based on actual vs predicted values
+        # Also include trough measurements from the next week (they represent end of this cycle)
+        next_week_start = injection_date + pd.Timedelta(days=7)
+        next_week_trough = df_with_data[
+            (df_with_data["date"] >= next_week_start) & 
+            (df_with_data["date"] < next_week_start + pd.Timedelta(days=1)) &
+            (df_with_data["cycle_category"] == "trough")
+        ]
+        
+        # Combine current week data with next week's trough
+        all_week_data = pd.concat([week_data, next_week_trough], ignore_index=True)
+        
+        if not all_week_data.empty:
+            # Calculate scaling factor and baseline offset based on actual vs predicted values
             actual_values = []
             predicted_values = []
+            trough_baseline = 0  # Will store the actual trough level for this cycle
             
-            for _, data_row in week_data.iterrows():
-                days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
+            for _, data_row in all_week_data.iterrows():
+                # For trough measurements from next week, treat them as day 7 of current week
+                if data_row["cycle_category"] == "trough" and data_row["date"] >= next_week_start:
+                    days_since_injection = 7.0
+                else:
+                    days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
+                
+                # Store trough baseline (injection day measurement)
+                if days_since_injection < 0.1:  # Very close to injection time
+                    trough_baseline = data_row["estradiol"]
+                    continue
+                
                 predicted_val = ev_model_3c(days_since_injection, dose)
                 
                 actual_values.append(data_row["estradiol"])
@@ -344,15 +370,17 @@ def generate_scaled_weekly_curves(df):
                 scaling_factors = [a/p for a, p in zip(actual_values, predicted_values)]
                 avg_scaling = sum(scaling_factors) / len(scaling_factors)
                 
-                # Scale the weekly curve
-                scaled_week_values = [v * avg_scaling for v in week_values]
+                # Scale and shift the weekly curve
+                # Add baseline to account for residual hormone levels at trough
+                scaled_week_values = [v * avg_scaling + trough_baseline for v in week_values]
                 
                 scaled_curves.append({
                     'times': week_times,
                     'values': scaled_week_values,
                     'injection_date': injection_date,
                     'scaling_factor': avg_scaling,
-                    'actual_points': week_data,
+                    'baseline_offset': trough_baseline,
+                    'actual_points': all_week_data,
                     'week_number': week_number
                 })
     
