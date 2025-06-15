@@ -39,7 +39,7 @@ hormone_data = [
         "estradiol": None,
         "testosterone": None,
         "dosage": 8,
-        "notes": "dosage increase, 20mg/ml vials",
+        "notes": "20mg/ml vials",
     },
     {
         "date": "2025-06-02",
@@ -317,7 +317,7 @@ def create_hormone_graph():
     cis_man_estradiol_range = (0, 43.3)  # pg/mL
     cis_man_testosterone_range = (219, 905)  # ng/dL
 
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15))
     fig.suptitle(
         "Ari's Hormone Levels and Dosage Over Time", fontsize=16, fontweight="bold"
     )
@@ -328,8 +328,6 @@ def create_hormone_graph():
 
     for _, row in df_with_data.iterrows():
         cycle_cat = row["cycle_category"]
-        color = cycle_colors[cycle_cat]
-        marker = cycle_markers[cycle_cat]
         
         if pd.notna(row["estradiol"]):
             # Find expected value for this date
@@ -592,11 +590,13 @@ def create_hormone_graph():
 
     fig.legend(handles=legend_elements, loc="center right", bbox_to_anchor=(1.15, 0.5))
 
-    # Format x-axis
+    # Format x-axis for all subplots
+    for ax in [ax1, ax2, ax3, ax4]:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator())
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+    
     ax4.set_xlabel("Date", fontweight="bold")
-    ax4.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-    ax4.xaxis.set_major_locator(mdates.WeekdayLocator())
-    plt.xticks(rotation=45)
 
     plt.tight_layout()
     plt.subplots_adjust(right=0.85)
