@@ -10,68 +10,80 @@ import numpy as np
 
 hormone_data = [
     {
-        "date": "2025-04-17",
+        "date": "2025-04-17 12:00:00",
         "estradiol": None,
         "testosterone": None,
         "dosage": 6,
         "notes": "first injection",
     },
     {
-        "date": "2025-05-05",
+        "date": "2025-05-05 11:07:00",
         "estradiol": 133,
         "testosterone": 1.5,
         "notes": None,
     },
     {
-        "date": "2025-05-15",
+        "date": "2025-05-15 17:27:00",
         "estradiol": 46,
         "testosterone": 12.8,
         "notes": None,
     },
     {
-        "date": "2025-05-26",
+        "date": "2025-05-26 10:30:00",
         "estradiol": 228,
         "testosterone": 6.5,
         "notes": None,
     },
     {
-        "date": "2025-05-29",
+        "date": "2025-05-29 12:00:00",
         "estradiol": None,
         "testosterone": None,
         "dosage": 8,
         "notes": "20mg/ml vials",
     },
     {
-        "date": "2025-06-02",
+        "date": "2025-06-02 11:53:00",
         "estradiol": 337,
         "testosterone": 4.4,
         "dosage": None,
         "notes": None,
     },
     {
-        "date": "2025-06-05",
+        "date": "2025-06-05 11:17:00",
         "estradiol": 117,
         "testosterone": 16,
         "dosage": None,
         "notes": None,
     },
     {
-        "date": "2025-06-07",
+        "date": "2025-06-07 14:48:00",
         "estradiol": 1522,
         "testosterone": 2.1,
         "dosage": None,
         "notes": None,
     },
     {
-        "date": "2025-06-12",
+        "date": "2025-06-12 12:00:00",
         "estradiol": None,
         "testosterone": None,
         "dosage": None,
         "notes": "switched pharmacy, 10mg/ml vials",
     },  {
-        "date": "2025-06-12",
+        "date": "2025-06-12 12:58:00",
         "estradiol": 122,
         "testosterone": 19.6,
+        "dosage": None,
+        "notes":  None
+    },  {
+        "date": "2025-06-14 14:39:00",
+        "estradiol": 1997,
+        "testosterone": 2.2,
+        "dosage": None,
+        "notes":  None
+    },  {
+        "date": "2025-06-16 15:25:00",
+        "estradiol": 1008,
+        "testosterone": 3,
         "dosage": None,
         "notes":  None
     },
@@ -471,13 +483,7 @@ def generate_scaled_weekly_curves(df):
     return scaled_curves
 
 
-def create_hormone_graph():
-    converted_data = convert_hormone_data(hormone_data)
-
-    # Convert data to DataFrame
-    df = pd.DataFrame(converted_data)
-    df["date"] = pd.to_datetime(df["date"])
-
+def create_hormone_graph(df):
     # Filter out rows with no hormone data for plotting
     df_with_data = df.dropna(subset=["estradiol", "testosterone"])
     
@@ -794,7 +800,7 @@ if __name__ == "__main__":
     
     converted_data = convert_hormone_data(hormone_data)
     df = pd.DataFrame(converted_data)
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"], format='%Y-%m-%d %H:%M:%S')
     df_with_data = df.dropna(subset=["estradiol", "testosterone"])
     
     for _, row in df_with_data.iterrows():
@@ -811,6 +817,6 @@ if __name__ == "__main__":
         print(f"  E2: {row['estradiol']:.0f} pg/mL, T: {row['testosterone']:.1f} ng/dL")
         print()
     
-    fig, axes = create_hormone_graph()
+    fig, axes = create_hormone_graph(df)
     plt.savefig("hormone_levels.png", dpi=300, bbox_inches="tight")
     print("graph generated!")
