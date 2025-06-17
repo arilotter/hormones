@@ -8,9 +8,11 @@ import numpy as np
 # t in nmol/L
 # dosage in mg/injection
 
+first_injection_date = "2025-04-17 12:00:00"
+first_injection_dt = datetime.strptime(first_injection_date, "%Y-%m-%d %H:%M:%S")
 hormone_data = [
     {
-        "date": "2025-04-17 12:00:00",
+        "date": first_injection_date,
         "estradiol": None,
         "testosterone": None,
         "dosage": 6,
@@ -137,9 +139,8 @@ def prepare_dosage_data(df):
     return dosage_dates, dosage_values
 
 
-def generate_injection_schedule(start_date, num_weeks=12):
+def generate_injection_schedule(start_dt, num_weeks=12):
     """Generate injection schedule dates"""
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     schedule = {
         "trough": [],  # Injection days (day 0)
         "peak": [],  # 2 days after injection
@@ -155,10 +156,9 @@ def generate_injection_schedule(start_date, num_weeks=12):
     return schedule
 
 
-def categorize_bloodwork_by_cycle(date_str, start_date="2025-04-17"):
+def categorize_bloodwork_by_cycle(test_dt, start_date=first_injection_date):
     """Categorize a bloodwork date as peak, mid, or trough based on weekly injection cycle"""
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    test_dt = datetime.strptime(date_str, "%Y-%m-%d")
+    start_dt = datetime.strptime(start_date[:10], "%Y-%m-%d")
     
     # Calculate days since start
     days_since_start = (test_dt - start_dt).days
@@ -246,7 +246,7 @@ def ev_model_3c(t, dose):
 def generate_ev_expected_curve(df):
     """Generate expected estradiol valerate response curve using step dosage function"""
     # Generate injection schedule (every 7 days from start)
-    start_date = pd.to_datetime("2025-04-17")
+    start_date = pd.to_datetime(first_injection_date)
     end_date = df["date"].max() + pd.Timedelta(days=14)
 
     # Create weekly injection dates
@@ -299,11 +299,11 @@ def generate_ev_expected_curve(df):
 
 def generate_scaled_weekly_curves(df):
     """Generate weekly curves scaled to match actual data points"""
-    start_date = pd.to_datetime("2025-04-17")
+    start_date = pd.to_datetime(first_injection_date)
     
     # Get actual data points with hormone values
     df_with_data = df.dropna(subset=["estradiol", "testosterone"]).copy()
-    df_with_data["cycle_category"] = df_with_data["date"].dt.strftime("%Y-%m-%d").apply(categorize_bloodwork_by_cycle)
+    df_with_data["cycle_category"] = df_with_data["date"].apply(categorize_bloodwork_by_cycle)
     
     scaled_curves = []
     
@@ -489,13 +489,13 @@ def create_hormone_graph(df):
     
     # Add cycle categorization for bloodwork results
     df_with_data = df_with_data.copy()
-    df_with_data["cycle_category"] = df_with_data["date"].dt.strftime("%Y-%m-%d").apply(categorize_bloodwork_by_cycle)
+    df_with_data["cycle_category"] = df_with_data["date"].apply(categorize_bloodwork_by_cycle)
 
     # Prepare dosage data
     dosage_dates, dosage_values = prepare_dosage_data(df)
 
     # Generate injection schedule
-    injection_schedule = generate_injection_schedule("2025-04-17")
+    injection_schedule = generate_injection_schedule(first_injection_dt)
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
     
@@ -804,8 +804,7 @@ if __name__ == "__main__":
     df_with_data = df.dropna(subset=["estradiol", "testosterone"])
     
     for _, row in df_with_data.iterrows():
-        date_str = row["date"].strftime("%Y-%m-%d")
-        cycle_cat = categorize_bloodwork_by_cycle(date_str)
+        cycle_cat = categorize_bloodwork_by_cycle(row["date"])
         
         # Calculate days since start for reference
         start_dt = datetime.strptime("2025-04-17", "%Y-%m-%d")
@@ -813,6 +812,7 @@ if __name__ == "__main__":
         days_since_start = (test_dt - start_dt).days
         cycle_day = days_since_start % 7
         
+        date_str = row["date"].strftime("%Y-%m-%d")
         print(f"{date_str}: {cycle_cat.upper()} (cycle day {cycle_day})")
         print(f"  E2: {row['estradiol']:.0f} pg/mL, T: {row['testosterone']:.1f} ng/dL")
         print()
