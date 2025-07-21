@@ -70,24 +70,55 @@ hormone_data = [
         "testosterone": None,
         "dosage": None,
         "notes": "switched pharmacy, 10mg/ml vials",
-    },  {
+    },
+    {
         "date": "2025-06-12 12:58:00",
         "estradiol": 122,
         "testosterone": 19.6,
         "dosage": None,
-        "notes":  None
-    },  {
+        "notes": None,
+    },
+    {
         "date": "2025-06-14 14:39:00",
         "estradiol": 1997,
         "testosterone": 2.2,
         "dosage": None,
-        "notes":  None
-    },  {
+        "notes": None,
+    },
+    {
         "date": "2025-06-16 15:25:00",
         "estradiol": 1008,
         "testosterone": 3,
         "dosage": None,
-        "notes":  None
+        "notes": None,
+    },
+    {
+        "date": "2025-07-03 12:00:00",
+        "estradiol": None,
+        "testosterone": None,
+        "dosage": 10,
+        "notes": "increased to 10mg injection",
+    },
+    {
+        "date": "2025-07-10 12:08:00",
+        "estradiol": 40,
+        "testosterone": 14.7,
+        "dosage": 10,
+        "notes": None,
+    },
+    {
+        "date": "2025-07-14 11:59:59",
+        "estradiol": None,
+        "testosterone": None,
+        "dosage": None,
+        "notes": "quit cigarettes",
+    },
+    {
+        "date": "2025-07-17  14:14:00",
+        "estradiol": 837,
+        "testosterone": 1.9,
+        "dosage": None,
+        "notes": None,
     },
 ]
 
@@ -139,7 +170,7 @@ def prepare_dosage_data(df):
     return dosage_dates, dosage_values
 
 
-def generate_injection_schedule(start_dt, num_weeks=12):
+def generate_injection_schedule(start_dt, end_dt):
     """Generate injection schedule dates"""
     schedule = {
         "trough": [],  # Injection days (day 0)
@@ -147,11 +178,12 @@ def generate_injection_schedule(start_dt, num_weeks=12):
         "mid": [],  # 4 days after injection
     }
 
-    for week in range(num_weeks):
-        injection_day = start_dt + timedelta(weeks=week)
-        schedule["trough"].append(injection_day)
-        schedule["peak"].append(injection_day + timedelta(days=2))
-        schedule["mid"].append(injection_day + timedelta(days=4))
+    current_injection_day = start_dt
+    while current_injection_day <= end_dt:
+        schedule["trough"].append(current_injection_day)
+        schedule["peak"].append(current_injection_day + timedelta(days=2))
+        schedule["mid"].append(current_injection_day + timedelta(days=4))
+        current_injection_day += timedelta(weeks=1)
 
     return schedule
 
@@ -159,18 +191,18 @@ def generate_injection_schedule(start_dt, num_weeks=12):
 def categorize_bloodwork_by_cycle(test_dt, start_date=first_injection_date):
     """Categorize a bloodwork date as peak, mid, or trough based on weekly injection cycle"""
     start_dt = datetime.strptime(start_date[:10], "%Y-%m-%d")
-    
+
     # Calculate days since start
     days_since_start = (test_dt - start_dt).days
-    
+
     # Find position in weekly cycle (0-6)
     cycle_day = days_since_start % 7
-    
+
     # Categorize based on cycle day
     # Day 0: Trough (injection day)
     # Day 1-3: Peak period (closest to day 2)
     # Day 4-6: Mid period (closest to day 4, approaching next trough)
-    
+
     if cycle_day == 0:
         return "trough"
     elif 1 <= cycle_day <= 3:
@@ -300,13 +332,15 @@ def generate_ev_expected_curve(df):
 def generate_scaled_weekly_curves(df):
     """Generate weekly curves scaled to match actual data points"""
     start_date = pd.to_datetime(first_injection_date)
-    
+
     # Get actual data points with hormone values
     df_with_data = df.dropna(subset=["estradiol", "testosterone"]).copy()
-    df_with_data["cycle_category"] = df_with_data["date"].apply(categorize_bloodwork_by_cycle)
-    
+    df_with_data["cycle_category"] = df_with_data["date"].apply(
+        categorize_bloodwork_by_cycle
+    )
+
     scaled_curves = []
-    
+
     # Find all unique weeks that contain data
     weeks_with_data = set()
     for _, row in df_with_data.iterrows():
@@ -314,191 +348,229 @@ def generate_scaled_weekly_curves(df):
         days_since_start = (test_date - start_date).days
         week_number = days_since_start // 7
         weeks_with_data.add(week_number)
-        
+
         # If this is a trough measurement, also add it to the previous week
         if row["cycle_category"] == "trough" and week_number > 0:
             weeks_with_data.add(week_number - 1)
-    
+
     # Process each week that has data
     for week_number in sorted(weeks_with_data):
         injection_date = start_date + pd.Timedelta(weeks=week_number)
-        
+
         # Get dosage for this injection
         dose = 6  # Default
         dosage_changes = df[df["dosage"].notna() & (df["date"] <= injection_date)]
         if not dosage_changes.empty:
             dose = dosage_changes.iloc[-1]["dosage"]
-        
+
         # Generate theoretical curve for this week (7 days)
         week_times = []
         week_values = []
-        
-        for hour in range(0, 7*24, 6):  # Every 6 hours for 7 days
+
+        for hour in range(0, 7 * 24, 6):  # Every 6 hours for 7 days
             days = hour / 24.0
             week_times.append(injection_date + pd.Timedelta(days=days))
             week_values.append(ev_model_3c(days, dose))
-        
+
         # Find actual data points in this week
         week_start = injection_date
         week_end = injection_date + pd.Timedelta(days=7)
-        week_data = df_with_data[(df_with_data["date"] >= week_start) & (df_with_data["date"] < week_end)]
-        
+        week_data = df_with_data[
+            (df_with_data["date"] >= week_start) & (df_with_data["date"] < week_end)
+        ]
+
         # Also include trough measurements from the next week (they represent end of this cycle)
         next_week_start = injection_date + pd.Timedelta(days=7)
         next_week_trough = df_with_data[
-            (df_with_data["date"] >= next_week_start) & 
-            (df_with_data["date"] < next_week_start + pd.Timedelta(days=1)) &
-            (df_with_data["cycle_category"] == "trough")
+            (df_with_data["date"] >= next_week_start)
+            & (df_with_data["date"] < next_week_start + pd.Timedelta(days=1))
+            & (df_with_data["cycle_category"] == "trough")
         ]
-        
+
         # Combine current week data with next week's trough
         all_week_data = pd.concat([week_data, next_week_trough], ignore_index=True)
-        
+
         if not all_week_data.empty:
             # Separate measurements by type for better curve fitting
             peak_measurements = []
             end_trough_measurements = []
             other_measurements = []
             trough_baseline = 0
-            
+
             for _, data_row in all_week_data.iterrows():
                 # For trough measurements from next week, treat them as day 7 of current week
-                if data_row["cycle_category"] == "trough" and data_row["date"] >= next_week_start:
+                if (
+                    data_row["cycle_category"] == "trough"
+                    and data_row["date"] >= next_week_start
+                ):
                     days_since_injection = 7.0
-                    end_trough_measurements.append((days_since_injection, data_row["estradiol"]))
+                    end_trough_measurements.append(
+                        (days_since_injection, data_row["estradiol"])
+                    )
                 else:
-                    days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
-                    
+                    days_since_injection = (
+                        data_row["date"] - injection_date
+                    ).total_seconds() / (24 * 3600)
+
                     if days_since_injection < 0.1:  # Injection day trough
                         trough_baseline = data_row["estradiol"]
                     elif data_row["cycle_category"] == "peak":
-                        peak_measurements.append((days_since_injection, data_row["estradiol"]))
+                        peak_measurements.append(
+                            (days_since_injection, data_row["estradiol"])
+                        )
                     else:
-                        other_measurements.append((days_since_injection, data_row["estradiol"]))
-            
+                        other_measurements.append(
+                            (days_since_injection, data_row["estradiol"])
+                        )
+
             # If we have both peak and end trough, try to fit with time scaling
             if peak_measurements and end_trough_measurements:
                 peak_day, peak_actual = peak_measurements[0]  # Take first peak
-                end_day, end_trough_actual = end_trough_measurements[0]  # Take first end trough
-                
+                end_day, end_trough_actual = end_trough_measurements[
+                    0
+                ]  # Take first end trough
+
                 # Find the optimal time scaling factor
                 best_time_scale = 1.0
-                best_fit_error = float('inf')
-                
+                best_fit_error = float("inf")
+
                 # Try different time scaling factors
-                for time_scale in [x/10.0 for x in range(5, 30)]:  # 0.5 to 3.0
+                for time_scale in [x / 10.0 for x in range(5, 30)]:  # 0.5 to 3.0
                     # Scale the theoretical curve timing
                     scaled_peak_day = peak_day / time_scale
                     scaled_end_day = end_day / time_scale
-                    
+
                     # Get theoretical values at scaled times
                     theoretical_peak = ev_model_3c(scaled_peak_day, dose)
                     theoretical_end = ev_model_3c(scaled_end_day, dose)
-                    
+
                     if theoretical_peak > 0 and theoretical_end > 0:
                         # Calculate vertical scaling needed to match peak
-                        vertical_scale = (peak_actual - trough_baseline) / theoretical_peak
-                        
+                        vertical_scale = (
+                            peak_actual - trough_baseline
+                        ) / theoretical_peak
+
                         # Predict what the end trough should be with this scaling
-                        predicted_end_trough = theoretical_end * vertical_scale + trough_baseline
-                        
+                        predicted_end_trough = (
+                            theoretical_end * vertical_scale + trough_baseline
+                        )
+
                         # Calculate error between predicted and actual end trough
                         error = abs(predicted_end_trough - end_trough_actual)
-                        
+
                         if error < best_fit_error:
                             best_fit_error = error
                             best_time_scale = time_scale
-                
+
                 # Generate curve with optimal time scaling
                 week_times = []
                 week_values = []
-                
+
                 # Calculate vertical scaling based on peak with optimal time scaling
                 scaled_peak_day = peak_day / best_time_scale
                 theoretical_peak = ev_model_3c(scaled_peak_day, dose)
-                vertical_scale = (peak_actual - trough_baseline) / theoretical_peak if theoretical_peak > 0 else 1.0
-                
-                for hour in range(0, 7*24, 6):  # Every 6 hours for 7 days
+                vertical_scale = (
+                    (peak_actual - trough_baseline) / theoretical_peak
+                    if theoretical_peak > 0
+                    else 1.0
+                )
+
+                for hour in range(0, 7 * 24, 6):  # Every 6 hours for 7 days
                     days = hour / 24.0
                     scaled_days = days / best_time_scale  # Apply time scaling
                     week_times.append(injection_date + pd.Timedelta(days=days))
                     theoretical_val = ev_model_3c(scaled_days, dose)
                     scaled_val = theoretical_val * vertical_scale + trough_baseline
                     week_values.append(scaled_val)
-                
-                scaled_curves.append({
-                    'times': week_times,
-                    'values': week_values,
-                    'injection_date': injection_date,
-                    'vertical_scaling': vertical_scale,
-                    'time_scaling': best_time_scale,
-                    'baseline_offset': trough_baseline,
-                    'actual_points': all_week_data,
-                    'week_number': week_number,
-                    'fit_error': best_fit_error
-                })
-                
+
+                scaled_curves.append(
+                    {
+                        "times": week_times,
+                        "values": week_values,
+                        "injection_date": injection_date,
+                        "vertical_scaling": vertical_scale,
+                        "time_scaling": best_time_scale,
+                        "baseline_offset": trough_baseline,
+                        "actual_points": all_week_data,
+                        "week_number": week_number,
+                        "fit_error": best_fit_error,
+                    }
+                )
+
             else:
                 # Fallback to original method if we don't have both peak and end trough
                 actual_values = []
                 predicted_values = []
-                
+
                 for _, data_row in all_week_data.iterrows():
-                    if data_row["cycle_category"] == "trough" and data_row["date"] >= next_week_start:
+                    if (
+                        data_row["cycle_category"] == "trough"
+                        and data_row["date"] >= next_week_start
+                    ):
                         days_since_injection = 7.0
                     else:
-                        days_since_injection = (data_row["date"] - injection_date).total_seconds() / (24 * 3600)
-                    
+                        days_since_injection = (
+                            data_row["date"] - injection_date
+                        ).total_seconds() / (24 * 3600)
+
                     if days_since_injection < 0.1:  # Skip injection day
                         continue
-                    
+
                     predicted_val = ev_model_3c(days_since_injection, dose)
                     actual_values.append(data_row["estradiol"])
                     predicted_values.append(predicted_val)
-                
+
                 if predicted_values and all(p > 0 for p in predicted_values):
-                    scaling_factors = [a/p for a, p in zip(actual_values, predicted_values)]
+                    scaling_factors = [
+                        a / p for a, p in zip(actual_values, predicted_values)
+                    ]
                     avg_scaling = sum(scaling_factors) / len(scaling_factors)
-                    
+
                     # Generate standard scaled curve
                     week_times = []
                     week_values = []
-                    
-                    for hour in range(0, 7*24, 6):
+
+                    for hour in range(0, 7 * 24, 6):
                         days = hour / 24.0
                         week_times.append(injection_date + pd.Timedelta(days=days))
-                        week_values.append(ev_model_3c(days, dose) * avg_scaling + trough_baseline)
-                    
-                    scaled_curves.append({
-                        'times': week_times,
-                        'values': week_values,
-                        'injection_date': injection_date,
-                        'vertical_scaling': avg_scaling,
-                        'time_scaling': 1.0,
-                        'baseline_offset': trough_baseline,
-                        'actual_points': all_week_data,
-                        'week_number': week_number
-                    })
-    
+                        week_values.append(
+                            ev_model_3c(days, dose) * avg_scaling + trough_baseline
+                        )
+
+                    scaled_curves.append(
+                        {
+                            "times": week_times,
+                            "values": week_values,
+                            "injection_date": injection_date,
+                            "vertical_scaling": avg_scaling,
+                            "time_scaling": 1.0,
+                            "baseline_offset": trough_baseline,
+                            "actual_points": all_week_data,
+                            "week_number": week_number,
+                        }
+                    )
+
     return scaled_curves
 
 
 def create_hormone_graph(df):
     # Filter out rows with no hormone data for plotting
     df_with_data = df.dropna(subset=["estradiol", "testosterone"])
-    
+
     # Add cycle categorization for bloodwork results
     df_with_data = df_with_data.copy()
-    df_with_data["cycle_category"] = df_with_data["date"].apply(categorize_bloodwork_by_cycle)
+    df_with_data["cycle_category"] = df_with_data["date"].apply(
+        categorize_bloodwork_by_cycle
+    )
 
     # Prepare dosage data
     dosage_dates, dosage_values = prepare_dosage_data(df)
 
     # Generate injection schedule
-    injection_schedule = generate_injection_schedule(first_injection_dt)
+    injection_schedule = generate_injection_schedule(first_injection_dt, df.iloc[-1]["date"])
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
-    
+
     # Generate scaled weekly curves
     scaled_curves = generate_scaled_weekly_curves(df)
 
@@ -523,7 +595,7 @@ def create_hormone_graph(df):
 
     for _, row in df_with_data.iterrows():
         cycle_cat = row["cycle_category"]
-        
+
         if pd.notna(row["estradiol"]):
             # Find expected value for this date
             target_date = row["date"]
@@ -574,16 +646,16 @@ def create_hormone_graph(df):
             linewidth=2,
             label="Expected E2 (EV model)",
         )
-    
+
     # Plot scaled weekly curves
     for curve in scaled_curves:
         ax1.plot(
-            curve['times'],
-            curve['values'],
+            curve["times"],
+            curve["values"],
             "--",
             color="blue",
             linewidth=2,
-            label="Scaled weekly curve" if curve == scaled_curves[0] else ""
+            label="Scaled weekly curve" if curve == scaled_curves[0] else "",
         )
 
     # Plot points by cycle category
@@ -592,7 +664,7 @@ def create_hormone_graph(df):
         if not cycle_data.empty:
             # Sort by date for proper line connections
             cycle_data_sorted = cycle_data.sort_values("date")
-            
+
             # Plot points and connecting lines for each category
             ax1.plot(
                 cycle_data_sorted["date"],
@@ -603,9 +675,9 @@ def create_hormone_graph(df):
                 markersize=8,
                 linewidth=2,
                 label=f"Estradiol ({cycle_cat})",
-                zorder=5
+                zorder=5,
             )
-            
+
             # Plot testosterone with separate trend lines
             ax2.plot(
                 cycle_data_sorted["date"],
@@ -616,10 +688,8 @@ def create_hormone_graph(df):
                 markersize=8,
                 linewidth=2,
                 label=f"Testosterone ({cycle_cat})",
-                zorder=5
+                zorder=5,
             )
-
-    # Remove the overall connecting line for testosterone (we now have category-specific lines)
 
     ax1.axhspan(
         desired_estradiol_range[0],
@@ -637,7 +707,7 @@ def create_hormone_graph(df):
     )
     ax1.set_ylabel("Estradiol (pg/mL)", fontweight="bold")
     ax1.set_title("Estradiol Levels by Injection Cycle Position")
-    ax1.legend()
+    ax1.legend(loc='upper right')
     ax1.grid(True, alpha=0.3)
 
     # Plot Testosterone
@@ -657,7 +727,7 @@ def create_hormone_graph(df):
     )
     ax2.set_ylabel("Testosterone (ng/dL)", fontweight="bold")
     ax2.set_title("Testosterone Levels by Injection Cycle Position")
-    ax2.legend()
+    ax2.legend(loc='upper right')
     ax2.grid(True, alpha=0.3)
 
     # Plot Dosage as step plot
@@ -697,7 +767,7 @@ def create_hormone_graph(df):
 
     ax3.set_ylabel("Dosage (mg)", fontweight="bold")
     ax3.set_title("Dosage Changes")
-    ax3.legend()
+    ax3.legend(loc='upper right')
     ax3.grid(True, alpha=0.3)
     ax3.set_ylim(bottom=0)  # Start y-axis at 0 for dosage
 
@@ -735,7 +805,7 @@ def create_hormone_graph(df):
 
     ax4.set_ylabel("Ratio", fontweight="bold")
     ax4.set_title("Actual vs Expected Estradiol Ratio")
-    ax4.legend()
+    ax4.legend(loc='upper right')
     ax4.grid(True, alpha=0.3)
     ax4.set_ylim(bottom=0)  # Start y-axis at 0
 
@@ -743,7 +813,13 @@ def create_hormone_graph(df):
     for ax in [ax1, ax2, ax3, ax4]:
         for kind, dates in injection_schedule.items():
             for date in dates:
-                ax.axvline(x=date, color=cycle_colors[kind], linestyle="--", alpha=0.5, linewidth=1)
+                ax.axvline(
+                    x=date,
+                    color=cycle_colors[kind],
+                    linestyle="--",
+                    alpha=0.5,
+                    linewidth=1,
+                )
 
     # Add notes with vertical lines
     for _, row in df[df["notes"].notna()].iterrows():
@@ -758,13 +834,13 @@ def create_hormone_graph(df):
 
         ax1.annotate(
             note_text,
-            xy=(note_date, (ax1.get_ylim()[1] - ax1.get_ylim()[0]) / 2),
+            xy=(note_date, (ax1.get_ylim()[1])),
             xytext=(10, -30),
             textcoords="offset points",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
             arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0"),
             fontsize=8,
-            rotation=45,
+            rotation=0,
         )
 
     legend_elements = [
@@ -783,12 +859,15 @@ def create_hormone_graph(df):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
         ax.xaxis.set_major_locator(mdates.WeekdayLocator())
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-    
+
     ax4.set_xlabel("Date", fontweight="bold")
 
     plt.tight_layout()
     plt.subplots_adjust(right=0.85)
-
+    xmin = min([a.get_xlim()[0] for a in (ax1, ax2, ax3, ax4)])
+    xmax = max([a.get_xlim()[1] for a in (ax1, ax2, ax3, ax4)])
+    for a in (ax1, ax2, ax3, ax4):
+        a.set_xlim((xmin, xmax))
     return fig, (ax1, ax2, ax3, ax4)
 
 
@@ -797,26 +876,40 @@ if __name__ == "__main__":
     # Print cycle categorization for all bloodwork results
     print("Bloodwork Results by Injection Cycle Position:")
     print("=" * 50)
-    
+
     converted_data = convert_hormone_data(hormone_data)
     df = pd.DataFrame(converted_data)
-    df["date"] = pd.to_datetime(df["date"], format='%Y-%m-%d %H:%M:%S')
-    df_with_data = df.dropna(subset=["estradiol", "testosterone"])
-    
-    for _, row in df_with_data.iterrows():
+    df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d %H:%M:%S")
+    expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
+
+    for _, row in df.iterrows():
         cycle_cat = categorize_bloodwork_by_cycle(row["date"])
-        
+
         # Calculate days since start for reference
         start_dt = datetime.strptime("2025-04-17", "%Y-%m-%d")
         test_dt = row["date"]
         days_since_start = (test_dt - start_dt).days
         cycle_day = days_since_start % 7
-        
+
         date_str = row["date"].strftime("%Y-%m-%d")
         print(f"{date_str}: {cycle_cat.upper()} (cycle day {cycle_day})")
-        print(f"  E2: {row['estradiol']:.0f} pg/mL, T: {row['testosterone']:.1f} ng/dL")
+        if row['testosterone'] == row['testosterone'] and row['estradiol'] == row['estradiol']:
+            target_date = row["date"]
+            closest_idx = min(
+                range(len(expected_curve_dates)),
+                key=lambda i: abs(
+                    (expected_curve_dates[i] - target_date).total_seconds()
+                ),
+            )
+            expected_value = expected_curve_values[closest_idx]
+            ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
+            print(f"  E2: {row['estradiol']:.0f} pg/mL ({round(ratio  * 100)}% of predicted {expected_value:.0f} pg/mL), T: {row['testosterone']:.1f} ng/dL")
+        if row['dosage'] == row['dosage']:
+            print(f"  Dosage change: {row['dosage']} ml/wk")
+        if row['notes']:
+            print(f"  Note: {row["notes"]}")
         print()
-    
+
     fig, axes = create_hormone_graph(df)
     plt.savefig("hormone_levels.png", dpi=300, bbox_inches="tight")
     print("graph generated!")
