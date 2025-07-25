@@ -120,6 +120,13 @@ hormone_data = [
         "dosage": None,
         "notes": None,
     },
+    {
+        "date": "2025-07-24 14:07:00",
+        "estradiol": 1294,
+        "testosterone": 2.2,
+        "dosage": None,
+        "notes": None
+    }
 ]
 
 
