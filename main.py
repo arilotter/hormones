@@ -12,6 +12,41 @@ first_injection_date = "2025-04-17 12:00:00"
 first_injection_dt = datetime.strptime(first_injection_date, "%Y-%m-%d %H:%M:%S")
 hormone_data = [
     {
+        "date": str(first_injection_dt - timedelta(weeks=2)),
+        "estradiol": None,
+        "testosterone": None,
+        "dosage": 0,
+        "notes": "e2 pills"
+    },
+    #   {
+    #     "date": "2024-02-09 11:36:00",
+    #     "estradiol": 50,
+    #     "testosterone": 15.4,
+    #     "dosage": None,
+    #     "notes": "pre-hrt"
+    # },
+    #   {
+    #     "date": "2024-07-03 14:47:00",
+    #     "estradiol": 454,
+    #     "testosterone": 7.3,
+    #     "dosage": None,
+    #     "notes": None
+    # },
+    # {
+    #     "date": "2025-03-28 10:46:00",
+    #     "estradiol": 6450,
+    #     "testosterone": 2.6,
+    #     "dosage": None,
+    #     "notes": "silly outlier"
+    # },
+        {
+        "date": "2025-04-03 9:31:00",
+        "estradiol": 396,
+        "testosterone": 2.1,
+        "dosage": None,
+        "notes": None
+    },
+    {
         "date": first_injection_date,
         "estradiol": None,
         "testosterone": None,
@@ -201,6 +236,10 @@ def categorize_bloodwork_by_cycle(test_dt, start_date=first_injection_date):
 
     # Calculate days since start
     days_since_start = (test_dt - start_dt).days
+
+    # before injections? who knows.
+    if days_since_start < 0:
+        return "?"
 
     # Find position in weekly cycle (0-6)
     cycle_day = days_since_start % 7
@@ -597,8 +636,8 @@ def create_hormone_graph(df):
     )
 
     # Define colors and markers for cycle categories
-    cycle_colors = {"trough": "darkred", "peak": "green", "mid": "orange"}
-    cycle_markers = {"trough": "v", "peak": "^", "mid": "o"}
+    cycle_colors = {"trough": "darkred", "peak": "green", "mid": "orange", "?": "blue"}
+    cycle_markers = {"trough": "v", "peak": "^", "mid": "o", "?": "o"}
 
     for _, row in df_with_data.iterrows():
         cycle_cat = row["cycle_category"]
@@ -654,19 +693,19 @@ def create_hormone_graph(df):
             label="Expected E2 (EV model)",
         )
 
-    # Plot scaled weekly curves
-    for curve in scaled_curves:
-        ax1.plot(
-            curve["times"],
-            curve["values"],
-            "--",
-            color="blue",
-            linewidth=2,
-            label="Scaled weekly curve" if curve == scaled_curves[0] else "",
-        )
+    # # Plot scaled weekly curves
+    # for curve in scaled_curves:
+    #     ax1.plot(
+    #         curve["times"],
+    #         curve["values"],
+    #         "--",
+    #         color="blue",
+    #         linewidth=2,
+    #         label="Scaled weekly curve" if curve == scaled_curves[0] else "",
+    #     )
 
     # Plot points by cycle category
-    for cycle_cat in ["trough", "peak", "mid"]:
+    for cycle_cat in ["trough", "peak", "mid", "?"]:
         cycle_data = df_with_data[df_with_data["cycle_category"] == cycle_cat]
         if not cycle_data.empty:
             # Sort by date for proper line connections
@@ -890,7 +929,7 @@ if __name__ == "__main__":
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
 
     for _, row in df.iterrows():
-        cycle_cat = categorize_bloodwork_by_cycle(row["date"])
+        cycle_cat = categorize_bloodwork_by_cycle(row["date"]) or "?"
 
         # Calculate days since start for reference
         start_dt = datetime.strptime("2025-04-17", "%Y-%m-%d")
