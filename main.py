@@ -139,7 +139,7 @@ hormone_data = [
         "date": "2025-07-10 12:08:00",
         "estradiol": 40,
         "testosterone": 14.7,
-        "dosage": Dosage(MedicationType.ESTRADIOL_VALERATE, 10),
+        "dosage": None,
         "notes": None,
     },
     {
@@ -163,9 +163,38 @@ hormone_data = [
         "dosage": None,
         "notes": None
     },
-    # Example of how to add a different medication type:
+
+    {
+        "date": "2025-08-28 12:00:00",
+        "estradiol": None,
+        "testosterone": None,
+        "dosage": Dosage(MedicationType.ESTRADIOL_ENANTHATE, 5),
+        "notes": "switched to enanthate",
+    },
+    {
+        "date": "2025-09-4 12:00:00",
+        "estradiol": None,
+        "testosterone": None,
+        "dosage": Dosage(MedicationType.ESTRADIOL_ENANTHATE, 6),
+        "notes": "upped enanthate dose",
+    },
+    {
+        "date": "2025-09-11 14:01:00",
+        "estradiol": 684,
+        "testosterone": 1.7,
+        "dosage": None,
+        "notes": None
+    }
+    # Example of how to add different medication types:
     # {
     #     "date": "2025-08-01 12:00:00",
+    #     "estradiol": None,
+    #     "testosterone": None,
+    #     "dosage": Dosage(MedicationType.ESTRADIOL_ENANTHATE, 5),
+    #     "notes": "switched to estradiol enanthate"
+    # },
+    # {
+    #     "date": "2025-08-15 12:00:00",
     #     "estradiol": None,
     #     "testosterone": None,
     #     "dosage": Dosage(MedicationType.DUMMY, 5),
