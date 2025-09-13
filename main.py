@@ -3,10 +3,37 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+from enum import Enum
+from typing import Dict, Any, Union
 
 # e2 in pmol/L
 # t in nmol/L
-# dosage in mg/injection
+
+class MedicationType(Enum):
+    ESTRADIOL_VALERATE = "estradiol_valerate"
+    DUMMY = "dummy"
+
+class Dosage:
+    def __init__(self, medication_type: MedicationType, amount_mg: float):
+        self.medication_type = medication_type
+        self.amount_mg = amount_mg
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "medication_type": self.medication_type.value,
+            "amount_mg": self.amount_mg
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Dosage':
+        return cls(
+            medication_type=MedicationType(data["medication_type"]),
+            amount_mg=data["amount_mg"]
+        )
+    
+    
+    def __str__(self) -> str:
+        return f"{self.amount_mg}mg {self.medication_type.value}"
 
 first_injection_date = "2025-04-17 12:00:00"
 first_injection_dt = datetime.strptime(first_injection_date, "%Y-%m-%d %H:%M:%S")
@@ -50,7 +77,7 @@ hormone_data = [
         "date": first_injection_date,
         "estradiol": None,
         "testosterone": None,
-        "dosage": 6,
+        "dosage": Dosage(MedicationType.ESTRADIOL_VALERATE, 6),
         "notes": "first injection",
     },
     {
@@ -75,7 +102,7 @@ hormone_data = [
         "date": "2025-05-29 12:00:00",
         "estradiol": None,
         "testosterone": None,
-        "dosage": 8,
+        "dosage": Dosage(MedicationType.ESTRADIOL_VALERATE, 8),
         "notes": "20mg/ml vials",
     },
     {
@@ -131,14 +158,14 @@ hormone_data = [
         "date": "2025-07-03 12:00:00",
         "estradiol": None,
         "testosterone": None,
-        "dosage": 10,
+        "dosage": Dosage(MedicationType.ESTRADIOL_VALERATE, 10),
         "notes": "increased to 10mg injection",
     },
     {
         "date": "2025-07-10 12:08:00",
         "estradiol": 40,
         "testosterone": 14.7,
-        "dosage": 10,
+        "dosage": Dosage(MedicationType.ESTRADIOL_VALERATE, 10),
         "notes": None,
     },
     {
@@ -161,7 +188,15 @@ hormone_data = [
         "testosterone": 2.2,
         "dosage": None,
         "notes": None
-    }
+    },
+    # Example of how to add a different medication type:
+    # {
+    #     "date": "2025-08-01 12:00:00",
+    #     "estradiol": None,
+    #     "testosterone": None,
+    #     "dosage": Dosage(MedicationType.DUMMY, 5),
+    #     "notes": "switched to dummy medication for testing"
+    # }
 ]
 
 
@@ -188,28 +223,36 @@ def convert_hormone_data(data):
 
 
 def prepare_dosage_data(df):
-    """Prepare dosage data for step plotting"""
+    """Prepare dosage data for step plotting by medication type"""
     # Sort by date
     df_sorted = df.sort_values("date").copy()
 
     # Forward fill dosage values to create step effect
     df_sorted["dosage_filled"] = df_sorted["dosage"].ffill()
 
-    # Create step plot data
-    dosage_dates = []
-    dosage_values = []
-
+    # Group by medication type
+    dosage_by_type = {}
+    
     current_dosage = None
+    current_type = None
 
     for _, row in df_sorted.iterrows():
         if pd.notna(row["dosage_filled"]):
-            if current_dosage != row["dosage_filled"]:
-                # Add the new dosage level
-                dosage_dates.append(row["date"])
-                dosage_values.append(row["dosage_filled"])
-                current_dosage = row["dosage_filled"]
+            dosage_obj = row["dosage_filled"]
+            dosage_amount = dosage_obj.amount_mg if isinstance(dosage_obj, Dosage) else dosage_obj
+            med_type = dosage_obj.medication_type if isinstance(dosage_obj, Dosage) else MedicationType.ESTRADIOL_VALERATE
+            
+            # Check if dosage or type changed
+            if current_dosage != dosage_amount or current_type != med_type:
+                if med_type not in dosage_by_type:
+                    dosage_by_type[med_type] = {"dates": [], "values": []}
+                
+                dosage_by_type[med_type]["dates"].append(row["date"])
+                dosage_by_type[med_type]["values"].append(dosage_amount)
+                current_dosage = dosage_amount
+                current_type = med_type
 
-    return dosage_dates, dosage_values
+    return dosage_by_type
 
 
 def generate_injection_schedule(start_dt, end_dt):
@@ -257,7 +300,7 @@ def categorize_bloodwork_by_cycle(test_dt, start_date=first_injection_date):
         return "mid"
 
 
-def ev_model_3c(t, dose):
+def ev_model_3c(t, dose_mg):
     """
     Estradiol valerate 3-compartment model using parameters from JS model
     Parameters from PKParameters["EV im"]: [478.0, 0.236, 4.85, 1.24]
@@ -273,10 +316,10 @@ def ev_model_3c(t, dose):
 
     # 3-compartment model calculation (matching JS e2Curve3C function)
     if k1 == k2 and k2 == k3:
-        ret = dose * d * k1 * k1 * t * t * np.exp(-k1 * t) / 2
+        ret = dose_mg * d * k1 * k1 * t * t * np.exp(-k1 * t) / 2
     elif k1 == k2 and k2 != k3:
         ret = (
-            dose
+            dose_mg
             * d
             * k1
             * k1
@@ -286,7 +329,7 @@ def ev_model_3c(t, dose):
         )
     elif k1 != k2 and k1 == k3:
         ret = (
-            dose
+            dose_mg
             * d
             * k1
             * k2
@@ -296,7 +339,7 @@ def ev_model_3c(t, dose):
         )
     elif k1 != k2 and k2 == k3:
         ret = (
-            dose
+            dose_mg
             * d
             * k1
             * k2
@@ -306,7 +349,7 @@ def ev_model_3c(t, dose):
         )
     else:
         ret = (
-            dose
+            dose_mg
             * d
             * k1
             * k2
@@ -318,6 +361,34 @@ def ev_model_3c(t, dose):
         )
 
     return max(0, ret)
+
+
+def dummy_model(t, dose_mg):
+    """
+    Simple dummy model: y = x * dose_mg
+    """
+    if t < 0:
+        return 0
+    return t * dose_mg
+
+
+def predict_hormone_curve(t, dosage: Dosage):
+    """
+    Predict hormone curve based on dosage type
+    
+    Args:
+        t: time in days since injection
+        dosage: Dosage object
+    
+    Returns:
+        Predicted hormone level
+    """
+    if dosage.medication_type == MedicationType.ESTRADIOL_VALERATE:
+        return ev_model_3c(t, dosage.amount_mg)
+    elif dosage.medication_type == MedicationType.DUMMY:
+        return dummy_model(t, dosage.amount_mg)
+    else:
+        raise ValueError(f"Unknown medication type: {dosage.medication_type}")
 
 
 # from https://github.com/WHSAH/estrannaise.js
@@ -346,7 +417,7 @@ def generate_ev_expected_curve(df):
         ]
 
         if valid_dosages.empty:
-            return 6  # Default starting dosage
+            return Dosage(MedicationType.ESTRADIOL_VALERATE, 6)  # Default starting dosage
 
         return valid_dosages.iloc[-1]["dosage_filled"]
 
@@ -367,7 +438,7 @@ def generate_ev_expected_curve(df):
                 # Get the dosage that was active at this injection date
                 dose = get_dosage_at_date(injection_date)
 
-                e2_contribution = ev_model_3c(days_since_injection, dose)
+                e2_contribution = predict_hormone_curve(days_since_injection, dose)
                 total_e2 += e2_contribution
 
         expected_values.append(total_e2)
@@ -404,7 +475,7 @@ def generate_scaled_weekly_curves(df):
         injection_date = start_date + pd.Timedelta(weeks=week_number)
 
         # Get dosage for this injection
-        dose = 6  # Default
+        dose = Dosage(MedicationType.ESTRADIOL_VALERATE, 6)  # Default
         dosage_changes = df[df["dosage"].notna() & (df["date"] <= injection_date)]
         if not dosage_changes.empty:
             dose = dosage_changes.iloc[-1]["dosage"]
@@ -416,7 +487,7 @@ def generate_scaled_weekly_curves(df):
         for hour in range(0, 7 * 24, 6):  # Every 6 hours for 7 days
             days = hour / 24.0
             week_times.append(injection_date + pd.Timedelta(days=days))
-            week_values.append(ev_model_3c(days, dose))
+            week_values.append(predict_hormone_curve(days, dose))
 
         # Find actual data points in this week
         week_start = injection_date
@@ -487,8 +558,8 @@ def generate_scaled_weekly_curves(df):
                     scaled_end_day = end_day / time_scale
 
                     # Get theoretical values at scaled times
-                    theoretical_peak = ev_model_3c(scaled_peak_day, dose)
-                    theoretical_end = ev_model_3c(scaled_end_day, dose)
+                    theoretical_peak = predict_hormone_curve(scaled_peak_day, dose)
+                    theoretical_end = predict_hormone_curve(scaled_end_day, dose)
 
                     if theoretical_peak > 0 and theoretical_end > 0:
                         # Calculate vertical scaling needed to match peak
@@ -514,7 +585,7 @@ def generate_scaled_weekly_curves(df):
 
                 # Calculate vertical scaling based on peak with optimal time scaling
                 scaled_peak_day = peak_day / best_time_scale
-                theoretical_peak = ev_model_3c(scaled_peak_day, dose)
+                theoretical_peak = predict_hormone_curve(scaled_peak_day, dose)
                 vertical_scale = (
                     (peak_actual - trough_baseline) / theoretical_peak
                     if theoretical_peak > 0
@@ -525,7 +596,7 @@ def generate_scaled_weekly_curves(df):
                     days = hour / 24.0
                     scaled_days = days / best_time_scale  # Apply time scaling
                     week_times.append(injection_date + pd.Timedelta(days=days))
-                    theoretical_val = ev_model_3c(scaled_days, dose)
+                    theoretical_val = predict_hormone_curve(scaled_days, dose)
                     scaled_val = theoretical_val * vertical_scale + trough_baseline
                     week_values.append(scaled_val)
 
@@ -562,7 +633,7 @@ def generate_scaled_weekly_curves(df):
                     if days_since_injection < 0.1:  # Skip injection day
                         continue
 
-                    predicted_val = ev_model_3c(days_since_injection, dose)
+                    predicted_val = predict_hormone_curve(days_since_injection, dose)
                     actual_values.append(data_row["estradiol"])
                     predicted_values.append(predicted_val)
 
@@ -580,7 +651,7 @@ def generate_scaled_weekly_curves(df):
                         days = hour / 24.0
                         week_times.append(injection_date + pd.Timedelta(days=days))
                         week_values.append(
-                            ev_model_3c(days, dose) * avg_scaling + trough_baseline
+                            predict_hormone_curve(days, dose) * avg_scaling + trough_baseline
                         )
 
                     scaled_curves.append(
@@ -610,7 +681,13 @@ def create_hormone_graph(df):
     )
 
     # Prepare dosage data
-    dosage_dates, dosage_values = prepare_dosage_data(df)
+    dosage_by_type = prepare_dosage_data(df)
+    
+    # Define colors for medication types
+    medication_colors = {
+        MedicationType.ESTRADIOL_VALERATE: "green",
+        MedicationType.DUMMY: "purple"
+    }
 
     # Generate injection schedule
     injection_schedule = generate_injection_schedule(first_injection_dt, df.iloc[-1]["date"])
@@ -776,43 +853,49 @@ def create_hormone_graph(df):
     ax2.legend(loc='upper right')
     ax2.grid(True, alpha=0.3)
 
-    # Plot Dosage as step plot
-    if dosage_dates and dosage_values:
-        ax3.step(
-            dosage_dates,
-            dosage_values,
-            where="post",
-            color="green",
-            linewidth=3,
-            marker="o",
-            markersize=8,
-            label="Dosage",
-        )
+    # Plot Dosage as step plot by medication type
+    if dosage_by_type:
+        for med_type, data in dosage_by_type.items():
+            dates = data["dates"]
+            values = data["values"]
+            color = medication_colors.get(med_type, "gray")
+            med_name = med_type.value.replace("_", " ").title()
+            
+            ax3.step(
+                dates,
+                values,
+                where="post",
+                color=color,
+                linewidth=3,
+                marker="o",
+                markersize=8,
+                label=f"{med_name}",
+            )
 
-        # Fill the step areas for better visualization
-        for i in range(len(dosage_dates)):
-            if i < len(dosage_dates) - 1:
-                # Fill from current date to next date
-                ax3.fill_between(
-                    [dosage_dates[i], dosage_dates[i + 1]],
-                    dosage_values[i],
-                    alpha=0.3,
-                    color="green",
-                    step="post",
-                )
-            else:
-                # Fill from last date to end of plot
-                end_date = max(df["date"])
-                ax3.fill_between(
-                    [dosage_dates[i], end_date],
-                    dosage_values[i],
-                    alpha=0.3,
-                    color="green",
-                    step="post",
-                )
+            # Fill the step areas for better visualization
+            for i in range(len(dates)):
+                if i < len(dates) - 1:
+                    # Fill from current date to next date
+                    ax3.fill_between(
+                        [dates[i], dates[i + 1]],
+                        values[i],
+                        alpha=0.3,
+                        color=color,
+                        step="post",
+                    )
+                else:
+                    # Fill from last date to end of plot
+                    end_date = max(df["date"])
+                    ax3.fill_between(
+                        [dates[i], end_date],
+                        values[i],
+                        alpha=0.3,
+                        color=color,
+                        step="post",
+                    )
 
     ax3.set_ylabel("Dosage (mg)", fontweight="bold")
-    ax3.set_title("Dosage Changes")
+    ax3.set_title("Medication Dosage by Type")
     ax3.legend(loc='upper right')
     ax3.grid(True, alpha=0.3)
     ax3.set_ylim(bottom=0)  # Start y-axis at 0 for dosage
@@ -950,8 +1033,8 @@ if __name__ == "__main__":
             expected_value = expected_curve_values[closest_idx]
             ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
             print(f"  E2: {row['estradiol']:.0f} pg/mL ({round(ratio  * 100)}% of predicted {expected_value:.0f} pg/mL), T: {row['testosterone']:.1f} ng/dL")
-        if row['dosage'] == row['dosage']:
-            print(f"  Dosage change: {row['dosage']} ml/wk")
+        if pd.notna(row['dosage']):
+            print(f"  Dosage change: {row['dosage']}")
         if row['notes']:
             print(f"  Note: {row["notes"]}")
         print()
