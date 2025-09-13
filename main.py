@@ -570,6 +570,7 @@ def create_hormone_graph(df):
     # Define colors for medication types
     medication_colors = {
         MedicationType.ESTRADIOL_VALERATE: "green",
+        MedicationType.ESTRADIOL_ENANTHATE: "blue", 
         MedicationType.DUMMY: "purple"
     }
 

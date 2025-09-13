@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 class MedicationType(Enum):
     ESTRADIOL_VALERATE = "estradiol_valerate"
+    ESTRADIOL_ENANTHATE = "estradiol_enanthate"
     DUMMY = "dummy"
 
 
@@ -93,6 +94,69 @@ def ev_model_3c(t, dose_mg):
     return max(0, ret)
 
 
+def een_model_3c(t, dose_mg):
+    """
+    Estradiol enanthate 3-compartment model using parameters from reference implementation
+    Parameters: [191.4, 0.119, 0.601, 0.402]
+    """
+    if t < 0:
+        return 0
+
+    # EEn IM parameters from the reference model
+    d = 191.4   # bioavailability factor
+    k1 = 0.119  # absorption rate constant (1/day)
+    k2 = 0.601  # distribution rate constant (1/day)
+    k3 = 0.402  # elimination rate constant (1/day)
+
+    # 3-compartment model calculation (same formula as EV, different parameters)
+    if k1 == k2 and k2 == k3:
+        ret = dose_mg * d * k1 * k1 * t * t * np.exp(-k1 * t) / 2
+    elif k1 == k2 and k2 != k3:
+        ret = (
+            dose_mg
+            * d
+            * k1
+            * k1
+            * (np.exp(-k3 * t) - np.exp(-k1 * t) * (1 + (k1 - k3) * t))
+            / (k1 - k3)
+            / (k1 - k3)
+        )
+    elif k1 != k2 and k1 == k3:
+        ret = (
+            dose_mg
+            * d
+            * k1
+            * k2
+            * (np.exp(-k2 * t) - np.exp(-k1 * t) * (1 + (k1 - k2) * t))
+            / (k1 - k2)
+            / (k1 - k2)
+        )
+    elif k1 != k2 and k2 == k3:
+        ret = (
+            dose_mg
+            * d
+            * k1
+            * k2
+            * (np.exp(-k1 * t) - np.exp(-k2 * t) * (1 - (k1 - k2) * t))
+            / (k1 - k2)
+            / (k1 - k2)
+        )
+    else:
+        ret = (
+            dose_mg
+            * d
+            * k1
+            * k2
+            * (
+                np.exp(-k1 * t) / ((k1 - k2) * (k1 - k3))
+                - np.exp(-k2 * t) / ((k1 - k2) * (k2 - k3))
+                + np.exp(-k3 * t) / ((k1 - k3) * (k2 - k3))
+            )
+        )
+
+    return max(0, ret)
+
+
 def dummy_model(t, dose_mg):
     """
     Simple dummy model: y = x * dose_mg
@@ -115,6 +179,8 @@ def predict_hormone_curve(t, dosage: Dosage):
     """
     if dosage.medication_type == MedicationType.ESTRADIOL_VALERATE:
         return ev_model_3c(t, dosage.amount_mg)
+    elif dosage.medication_type == MedicationType.ESTRADIOL_ENANTHATE:
+        return een_model_3c(t, dosage.amount_mg)
     elif dosage.medication_type == MedicationType.DUMMY:
         return dummy_model(t, dosage.amount_mg)
     else:
