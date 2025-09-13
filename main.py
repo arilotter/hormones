@@ -16,7 +16,7 @@ hormone_data = [
         "date": str(first_injection_dt - timedelta(weeks=2)),
         "estradiol": None,
         "testosterone": None,
-        "dosage": 0,
+        "dosage": Dosage(MedicationType.ORAL, 6),
         "notes": "e2 pills"
     },
     #   {
