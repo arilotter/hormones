@@ -245,6 +245,14 @@ def prepare_dosage_data(df):
             dosage_amount = dosage_obj.amount_mg if isinstance(dosage_obj, Dosage) else dosage_obj
             med_type = dosage_obj.medication_type if isinstance(dosage_obj, Dosage) else MedicationType.ESTRADIOL_VALERATE
             
+            # Check if medication type changed (switching medications)
+            if current_type is not None and current_type != med_type:
+                # Set previous medication to 0 at the switch date
+                if current_type not in dosage_by_type:
+                    dosage_by_type[current_type] = {"dates": [], "values": []}
+                dosage_by_type[current_type]["dates"].append(row["date"])
+                dosage_by_type[current_type]["values"].append(0)
+            
             # Check if dosage or type changed
             if current_dosage != dosage_amount or current_type != med_type:
                 if med_type not in dosage_by_type:
@@ -359,230 +367,6 @@ def generate_ev_expected_curve(df):
     return date_range.tolist(), expected_values
 
 
-def generate_scaled_weekly_curves(df):
-    """Generate weekly curves scaled to match actual data points"""
-    start_date = pd.to_datetime(first_injection_date)
-
-    # Get actual data points with hormone values
-    df_with_data = df.dropna(subset=["estradiol", "testosterone"]).copy()
-    df_with_data["cycle_category"] = df_with_data["date"].apply(
-        categorize_bloodwork_by_cycle
-    )
-
-    scaled_curves = []
-
-    # Find all unique weeks that contain data
-    weeks_with_data = set()
-    for _, row in df_with_data.iterrows():
-        test_date = row["date"]
-        days_since_start = (test_date - start_date).days
-        week_number = days_since_start // 7
-        weeks_with_data.add(week_number)
-
-        # If this is a trough measurement, also add it to the previous week
-        if row["cycle_category"] == "trough" and week_number > 0:
-            weeks_with_data.add(week_number - 1)
-
-    # Process each week that has data
-    for week_number in sorted(weeks_with_data):
-        injection_date = start_date + pd.Timedelta(weeks=week_number)
-
-        # Get dosage for this injection
-        dose = Dosage(MedicationType.ESTRADIOL_VALERATE, 6)  # Default
-        dosage_changes = df[df["dosage"].notna() & (df["date"] <= injection_date)]
-        if not dosage_changes.empty:
-            dose = dosage_changes.iloc[-1]["dosage"]
-
-        # Generate theoretical curve for this week (7 days)
-        week_times = []
-        week_values = []
-
-        for hour in range(0, 7 * 24, 6):  # Every 6 hours for 7 days
-            days = hour / 24.0
-            week_times.append(injection_date + pd.Timedelta(days=days))
-            week_values.append(predict_hormone_curve(days, dose))
-
-        # Find actual data points in this week
-        week_start = injection_date
-        week_end = injection_date + pd.Timedelta(days=7)
-        week_data = df_with_data[
-            (df_with_data["date"] >= week_start) & (df_with_data["date"] < week_end)
-        ]
-
-        # Also include trough measurements from the next week (they represent end of this cycle)
-        next_week_start = injection_date + pd.Timedelta(days=7)
-        next_week_trough = df_with_data[
-            (df_with_data["date"] >= next_week_start)
-            & (df_with_data["date"] < next_week_start + pd.Timedelta(days=1))
-            & (df_with_data["cycle_category"] == "trough")
-        ]
-
-        # Combine current week data with next week's trough
-        all_week_data = pd.concat([week_data, next_week_trough], ignore_index=True)
-
-        if not all_week_data.empty:
-            # Separate measurements by type for better curve fitting
-            peak_measurements = []
-            end_trough_measurements = []
-            other_measurements = []
-            trough_baseline = 0
-
-            for _, data_row in all_week_data.iterrows():
-                # For trough measurements from next week, treat them as day 7 of current week
-                if (
-                    data_row["cycle_category"] == "trough"
-                    and data_row["date"] >= next_week_start
-                ):
-                    days_since_injection = 7.0
-                    end_trough_measurements.append(
-                        (days_since_injection, data_row["estradiol"])
-                    )
-                else:
-                    days_since_injection = (
-                        data_row["date"] - injection_date
-                    ).total_seconds() / (24 * 3600)
-
-                    if days_since_injection < 0.1:  # Injection day trough
-                        trough_baseline = data_row["estradiol"]
-                    elif data_row["cycle_category"] == "peak":
-                        peak_measurements.append(
-                            (days_since_injection, data_row["estradiol"])
-                        )
-                    else:
-                        other_measurements.append(
-                            (days_since_injection, data_row["estradiol"])
-                        )
-
-            # If we have both peak and end trough, try to fit with time scaling
-            if peak_measurements and end_trough_measurements:
-                peak_day, peak_actual = peak_measurements[0]  # Take first peak
-                end_day, end_trough_actual = end_trough_measurements[
-                    0
-                ]  # Take first end trough
-
-                # Find the optimal time scaling factor
-                best_time_scale = 1.0
-                best_fit_error = float("inf")
-
-                # Try different time scaling factors
-                for time_scale in [x / 10.0 for x in range(5, 30)]:  # 0.5 to 3.0
-                    # Scale the theoretical curve timing
-                    scaled_peak_day = peak_day / time_scale
-                    scaled_end_day = end_day / time_scale
-
-                    # Get theoretical values at scaled times
-                    theoretical_peak = predict_hormone_curve(scaled_peak_day, dose)
-                    theoretical_end = predict_hormone_curve(scaled_end_day, dose)
-
-                    if theoretical_peak > 0 and theoretical_end > 0:
-                        # Calculate vertical scaling needed to match peak
-                        vertical_scale = (
-                            peak_actual - trough_baseline
-                        ) / theoretical_peak
-
-                        # Predict what the end trough should be with this scaling
-                        predicted_end_trough = (
-                            theoretical_end * vertical_scale + trough_baseline
-                        )
-
-                        # Calculate error between predicted and actual end trough
-                        error = abs(predicted_end_trough - end_trough_actual)
-
-                        if error < best_fit_error:
-                            best_fit_error = error
-                            best_time_scale = time_scale
-
-                # Generate curve with optimal time scaling
-                week_times = []
-                week_values = []
-
-                # Calculate vertical scaling based on peak with optimal time scaling
-                scaled_peak_day = peak_day / best_time_scale
-                theoretical_peak = predict_hormone_curve(scaled_peak_day, dose)
-                vertical_scale = (
-                    (peak_actual - trough_baseline) / theoretical_peak
-                    if theoretical_peak > 0
-                    else 1.0
-                )
-
-                for hour in range(0, 7 * 24, 6):  # Every 6 hours for 7 days
-                    days = hour / 24.0
-                    scaled_days = days / best_time_scale  # Apply time scaling
-                    week_times.append(injection_date + pd.Timedelta(days=days))
-                    theoretical_val = predict_hormone_curve(scaled_days, dose)
-                    scaled_val = theoretical_val * vertical_scale + trough_baseline
-                    week_values.append(scaled_val)
-
-                scaled_curves.append(
-                    {
-                        "times": week_times,
-                        "values": week_values,
-                        "injection_date": injection_date,
-                        "vertical_scaling": vertical_scale,
-                        "time_scaling": best_time_scale,
-                        "baseline_offset": trough_baseline,
-                        "actual_points": all_week_data,
-                        "week_number": week_number,
-                        "fit_error": best_fit_error,
-                    }
-                )
-
-            else:
-                # Fallback to original method if we don't have both peak and end trough
-                actual_values = []
-                predicted_values = []
-
-                for _, data_row in all_week_data.iterrows():
-                    if (
-                        data_row["cycle_category"] == "trough"
-                        and data_row["date"] >= next_week_start
-                    ):
-                        days_since_injection = 7.0
-                    else:
-                        days_since_injection = (
-                            data_row["date"] - injection_date
-                        ).total_seconds() / (24 * 3600)
-
-                    if days_since_injection < 0.1:  # Skip injection day
-                        continue
-
-                    predicted_val = predict_hormone_curve(days_since_injection, dose)
-                    actual_values.append(data_row["estradiol"])
-                    predicted_values.append(predicted_val)
-
-                if predicted_values and all(p > 0 for p in predicted_values):
-                    scaling_factors = [
-                        a / p for a, p in zip(actual_values, predicted_values)
-                    ]
-                    avg_scaling = sum(scaling_factors) / len(scaling_factors)
-
-                    # Generate standard scaled curve
-                    week_times = []
-                    week_values = []
-
-                    for hour in range(0, 7 * 24, 6):
-                        days = hour / 24.0
-                        week_times.append(injection_date + pd.Timedelta(days=days))
-                        week_values.append(
-                            predict_hormone_curve(days, dose) * avg_scaling + trough_baseline
-                        )
-
-                    scaled_curves.append(
-                        {
-                            "times": week_times,
-                            "values": week_values,
-                            "injection_date": injection_date,
-                            "vertical_scaling": avg_scaling,
-                            "time_scaling": 1.0,
-                            "baseline_offset": trough_baseline,
-                            "actual_points": all_week_data,
-                            "week_number": week_number,
-                        }
-                    )
-
-    return scaled_curves
-
-
 def create_hormone_graph(df):
     # Filter out rows with no hormone data for plotting
     df_with_data = df.dropna(subset=["estradiol", "testosterone"])
@@ -608,8 +392,6 @@ def create_hormone_graph(df):
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
 
-    # Generate scaled weekly curves
-    scaled_curves = generate_scaled_weekly_curves(df)
 
     # Calculate ratio of actual to expected estradiol
     actual_to_expected_ratios = []
@@ -683,17 +465,6 @@ def create_hormone_graph(df):
             linewidth=2,
             label="Expected E2 (EV model)",
         )
-
-    # # Plot scaled weekly curves
-    # for curve in scaled_curves:
-    #     ax1.plot(
-    #         curve["times"],
-    #         curve["values"],
-    #         "--",
-    #         color="blue",
-    #         linewidth=2,
-    #         label="Scaled weekly curve" if curve == scaled_curves[0] else "",
-    #     )
 
     # Plot points by cycle category
     for cycle_cat in ["trough", "peak", "mid", "?"]:
