@@ -3,16 +3,15 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import pandas as pd
 
-from models import MedicationType, Dosage, predict_hormone_curve
+from models import MedicationType, Dosage, predict_hormone_curve, calculate_cycle_points_for_injection
 
 # e2 in pmol/L
 # t in nmol/L
 
-first_injection_date = "2025-04-17 12:00:00"
-first_injection_dt = datetime.strptime(first_injection_date, "%Y-%m-%d %H:%M:%S")
+# Removed global start date - now using dynamic injection schedule
 hormone_data = [
     {
-        "date": str(first_injection_dt - timedelta(weeks=2)),
+        "date": "2025-04-03 12:00:00",
         "estradiol": None,
         "testosterone": None,
         "dosage": Dosage(MedicationType.ORAL, 6),
@@ -47,7 +46,7 @@ hormone_data = [
         "notes": None
     },
     {
-        "date": first_injection_date,
+        "date": "2025-04-17 12:00:00",
         "estradiol": None,
         "testosterone": None,
         "dosage": Dosage(MedicationType.ESTRADIOL_VALERATE, 6),
@@ -257,49 +256,129 @@ def prepare_dosage_data(df):
     return dosage_by_type
 
 
-def generate_injection_schedule(start_dt, end_dt):
-    """Generate injection schedule dates"""
+def generate_injection_schedule_with_steady_state(df):
+    """Generate injection schedule dates accounting for steady-state accumulation"""
+    complete_injections = generate_complete_injection_schedule(df)
+    
+    if not complete_injections:
+        return {"trough": [], "peak": [], "mid": []}
+    
     schedule = {
-        "trough": [],  # Injection days (day 0)
-        "peak": [],  # 2 days after injection
-        "mid": [],  # 4 days after injection
+        "trough": [],  # Dates of next injections (trough timing)
+        "peak": [],   # Dates with highest predicted values  
+        "mid": [],    # Dates with 50% predicted values
     }
-
-    current_injection_day = start_dt
-    while current_injection_day <= end_dt:
-        schedule["trough"].append(current_injection_day)
-        schedule["peak"].append(current_injection_day + timedelta(days=2))
-        schedule["mid"].append(current_injection_day + timedelta(days=4))
-        current_injection_day += timedelta(weeks=1)
-
+    
+    # Calculate cycle points for each injection
+    for i, (injection_date, dosage) in enumerate(complete_injections):
+        # Skip oral medications
+        if dosage.medication_type == MedicationType.ORAL:
+            continue
+            
+        # Build injection history up to this point
+        injection_history = complete_injections[:i]
+        
+        # Calculate cycle points for this injection
+        cycle_points = calculate_cycle_points_for_injection(
+            injection_date, dosage, injection_history
+        )
+        
+        # Add to schedule
+        schedule["trough"].append(cycle_points['trough_date'])
+        schedule["peak"].append(cycle_points['peak_date'])  
+        schedule["mid"].append(cycle_points['mid_date'])
+    
     return schedule
 
 
-def categorize_bloodwork_by_cycle(test_dt, start_date=first_injection_date):
-    """Categorize a bloodwork date as peak, mid, or trough based on weekly injection cycle"""
-    start_dt = datetime.strptime(start_date[:10], "%Y-%m-%d")
+def get_dosage_at_date(target_date, df):
+    """Get the dosage that was active at a specific date"""
+    # Find the most recent dosage change before or on target_date
+    df_sorted = df.sort_values("date").copy()
+    valid_dosages = df_sorted[
+        (df_sorted["date"] <= target_date) & (df_sorted["dosage"].notna())
+    ]
 
-    # Calculate days since start
-    days_since_start = (test_dt - start_dt).days
+    if valid_dosages.empty:
+        return Dosage(MedicationType.ESTRADIOL_VALERATE, 6)  # Default starting dosage
 
-    # before injections? who knows.
-    if days_since_start < 0:
+    return valid_dosages.iloc[-1]["dosage"]
+
+
+def generate_complete_injection_schedule(df):
+    """Generate complete injection schedule assuming regular dosing intervals"""
+    injection_rows = df[df['dosage'].notna()].sort_values('date')
+    
+    if injection_rows.empty:
+        return []
+    
+    complete_schedule = []
+    
+    for i, (_, row) in enumerate(injection_rows.iterrows()):
+        start_date = row['date']
+        dosage = row['dosage']
+        
+        # Determine end date for this dosage period
+        if i < len(injection_rows) - 1:
+            end_date = injection_rows.iloc[i + 1]['date']
+        else:
+            # For the last dosage, extend to end of data + some buffer
+            end_date = df['date'].max() + timedelta(days=30)
+        
+        # Generate regular injections for this period
+        current_date = start_date
+        while current_date < end_date:
+            complete_schedule.append((current_date, dosage))
+            current_date += timedelta(days=dosage.interval_days)
+    
+    return complete_schedule
+
+
+def categorize_bloodwork_by_steady_state_cycle(test_dt, df):
+    """Categorize a bloodwork date based on steady-state cycle points"""
+    complete_injections = generate_complete_injection_schedule(df)
+    
+    if not complete_injections:
         return "?"
-
-    # Find position in weekly cycle (0-6)
-    cycle_day = days_since_start % 7
-
-    # Categorize based on cycle day
-    # Day 0: Trough (injection day)
-    # Day 1-3: Peak period (closest to day 2)
-    # Day 4-6: Mid period (closest to day 4, approaching next trough)
-
-    if cycle_day == 0:
+    
+    # Find the injection cycle that contains this test date
+    relevant_injection = None
+    injection_history = []
+    
+    for inj_date, dosage in complete_injections:
+        if inj_date <= test_dt < inj_date + timedelta(days=dosage.interval_days):
+            # This is the cycle that contains our test
+            relevant_injection = (inj_date, dosage)
+            break
+        elif inj_date < test_dt:
+            # This injection happened before our test, add to history
+            injection_history.append((inj_date, dosage))
+    
+    if relevant_injection is None:
+        return "?"
+    
+    injection_date, dosage = relevant_injection
+    
+    # Calculate cycle points for this injection
+    cycle_points = calculate_cycle_points_for_injection(
+        injection_date, dosage, injection_history
+    )
+    
+    # Special case: injection day should always be considered trough
+    # Give some leniency (within 6 hours of injection = trough)
+    hours_since_injection = (test_dt - injection_date).total_seconds() / 3600
+    if abs(hours_since_injection) <= 6:  # Within 6 hours of injection
         return "trough"
-    elif 1 <= cycle_day <= 3:
-        return "peak"
-    else:  # 4 <= cycle_day <= 6
-        return "mid"
+    
+    # Find which cycle point the test date is closest to
+    distances = {
+        'trough': abs((test_dt - cycle_points['trough_date']).total_seconds()),
+        'peak': abs((test_dt - cycle_points['peak_date']).total_seconds()),
+        'mid': abs((test_dt - cycle_points['mid_date']).total_seconds())
+    }
+    
+    # Return the category with the smallest time distance
+    return min(distances.items(), key=lambda x: x[1])[0]
 
 
 
@@ -307,7 +386,9 @@ def categorize_bloodwork_by_cycle(test_dt, start_date=first_injection_date):
 def generate_ev_expected_curve(df):
     """Generate expected estradiol valerate response curve using step dosage function"""
     # Generate injection schedule (every 7 days from start)
-    start_date = pd.to_datetime(first_injection_date)
+    # Get the first injection date from the data
+    first_injection_row = df[df['dosage'].notna()].iloc[0]
+    start_date = first_injection_row["date"]
     end_date = df["date"].max() + pd.Timedelta(days=14)
 
     # Create weekly injection dates
@@ -365,7 +446,7 @@ def create_hormone_graph(df):
     # Add cycle categorization for bloodwork results
     df_with_data = df_with_data.copy()
     df_with_data["cycle_category"] = df_with_data["date"].apply(
-        categorize_bloodwork_by_cycle
+        lambda date: categorize_bloodwork_by_steady_state_cycle(date, df)
     )
 
     # Prepare dosage data
@@ -378,8 +459,8 @@ def create_hormone_graph(df):
         MedicationType.DUMMY: "purple"
     }
 
-    # Generate injection schedule
-    injection_schedule = generate_injection_schedule(first_injection_dt, df.iloc[-1]["date"])
+    # Generate injection schedule using steady-state calculations
+    injection_schedule = generate_injection_schedule_with_steady_state(df)
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
 
@@ -507,7 +588,7 @@ def create_hormone_graph(df):
     ax1.set_ylabel("Estradiol (pg/mL)", fontweight="bold")
     ax1.set_title("Estradiol Levels by Injection Cycle Position")
     ax1.legend(loc='upper right')
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=0.3, axis='y')  # Only horizontal grid lines
 
     # Plot Testosterone
     ax2.axhspan(
@@ -527,7 +608,7 @@ def create_hormone_graph(df):
     ax2.set_ylabel("Testosterone (ng/dL)", fontweight="bold")
     ax2.set_title("Testosterone Levels by Injection Cycle Position")
     ax2.legend(loc='upper right')
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(True, alpha=0.3, axis='y')  # Only horizontal grid lines
 
     # Plot Dosage as step plot by medication type
     if dosage_by_type:
@@ -573,7 +654,7 @@ def create_hormone_graph(df):
     ax3.set_ylabel("Dosage (mg)", fontweight="bold")
     ax3.set_title("Medication Dosage by Type")
     ax3.legend(loc='upper right')
-    ax3.grid(True, alpha=0.3)
+    ax3.grid(True, alpha=0.3, axis='y')  # Only horizontal grid lines
     ax3.set_ylim(bottom=0)  # Start y-axis at 0 for dosage
 
     # Plot Actual/Expected Ratio
@@ -611,7 +692,7 @@ def create_hormone_graph(df):
     ax4.set_ylabel("Ratio", fontweight="bold")
     ax4.set_title("Actual vs Expected Estradiol Ratio")
     ax4.legend(loc='upper right')
-    ax4.grid(True, alpha=0.3)
+    ax4.grid(True, alpha=0.3, axis='y')  # Only horizontal grid lines
     ax4.set_ylim(bottom=0)  # Start y-axis at 0
 
     # Add injection schedule markers to all plots
@@ -688,7 +769,7 @@ if __name__ == "__main__":
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
 
     for _, row in df.iterrows():
-        cycle_cat = categorize_bloodwork_by_cycle(row["date"]) or "?"
+        cycle_cat = categorize_bloodwork_by_steady_state_cycle(row["date"], df) or "?"
 
         # Calculate days since start for reference
         start_dt = datetime.strptime("2025-04-17", "%Y-%m-%d")
