@@ -2,7 +2,6 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import pandas as pd
-import numpy as np
 
 from models import MedicationType, Dosage, predict_hormone_curve
 
