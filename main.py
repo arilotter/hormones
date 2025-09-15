@@ -183,22 +183,14 @@ hormone_data = [
         "testosterone": 1.7,
         "dosage": None,
         "notes": None
+    },
+    {
+        "date": "2025-09-13 13:58:00",
+        "estradiol": 1460,
+        "testosterone": 1.7,
+        "dosage": None,
+        "notes": None
     }
-    # Example of how to add different medication types:
-    # {
-    #     "date": "2025-08-01 12:00:00",
-    #     "estradiol": None,
-    #     "testosterone": None,
-    #     "dosage": Dosage(MedicationType.ESTRADIOL_ENANTHATE, 5),
-    #     "notes": "switched to estradiol enanthate"
-    # },
-    # {
-    #     "date": "2025-08-15 12:00:00",
-    #     "estradiol": None,
-    #     "testosterone": None,
-    #     "dosage": Dosage(MedicationType.DUMMY, 5),
-    #     "notes": "switched to dummy medication for testing"
-    # }
 ]
 
 
