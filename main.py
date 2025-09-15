@@ -419,7 +419,7 @@ def create_hormone_graph(df):
             ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
 
             annotation_text = (
-                f"{row['estradiol']:.0f} ({cycle_cat})\nTheory: {expected_value:.0f}"
+                f"{row['estradiol']:.0f}"
             )
             ax1.annotate(
                 annotation_text,
@@ -435,7 +435,7 @@ def create_hormone_graph(df):
             ratio_dates.append(target_date)
 
         if pd.notna(row["testosterone"]):
-            annotation_text = f"{row['testosterone']:.1f} ({cycle_cat})"
+            annotation_text = f"{row['testosterone']:.1f}"
             ax2.annotate(
                 annotation_text,
                 xy=(row["date"], row["testosterone"]),
