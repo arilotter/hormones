@@ -8,7 +8,14 @@ from models import MedicationType, Dosage, predict_hormone_curve, calculate_cycl
 # e2 in pmol/l
 # t in nmol/l
 
-hormone_data = [
+hormone_data = [ 
+    {
+        "date": "2024-02-09 11:36:00",
+        "estradiol": 50,
+        "testosterone": 15.4,
+        "dosage": Dosage(MedicationType.NO_HRT, 0),
+        "notes": "pre-hrt bloodwork"
+    },
     {
         "date": "2025-04-03 12:00:00",
         "estradiol": None,
@@ -445,6 +452,8 @@ def create_hormone_graph(df):
     
     # define colors for medication types
     medication_colors = {
+        MedicationType.NO_HRT: "gray",
+        MedicationType.ORAL: "yellow",
         MedicationType.ESTRADIOL_VALERATE: "green",
         MedicationType.ESTRADIOL_ENANTHATE: "blue", 
         MedicationType.DUMMY: "purple"

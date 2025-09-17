@@ -4,6 +4,7 @@ from typing import Dict, Any
 
 
 class MedicationType(Enum):
+    NO_HRT = "no_hrt"
     ORAL = "oral"
     ESTRADIOL_VALERATE = "estradiol_valerate"
     ESTRADIOL_ENANTHATE = "estradiol_enanthate"
@@ -187,8 +188,8 @@ def predict_hormone_curve(t, dosage: Dosage):
         return een_model_3c(t, dosage.amount_mg)
     elif dosage.medication_type == MedicationType.DUMMY:
         return dummy_model(t, dosage.amount_mg)
-    elif dosage.medication_type == MedicationType.ORAL:
-        return 0  # Oral medications don't contribute to injection-based curves
+    elif dosage.medication_type == MedicationType.ORAL or dosage.medication_type == MedicationType.NO_HRT:
+        return 0
     else:
         raise ValueError(f"Unknown medication type: {dosage.medication_type}")
 
