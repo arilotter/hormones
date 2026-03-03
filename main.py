@@ -1,27 +1,33 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle
 from datetime import datetime, timedelta
 import pandas as pd
 
-from models import MedicationType, Dosage, predict_hormone_curve, calculate_cycle_points_for_injection
+from models import (
+    MedicationType,
+    Dosage,
+    predict_hormone_curve,
+    calculate_cycle_points_for_injection,
+)
 
 # e2 in pmol/l
 # t in nmol/l
 
-hormone_data = [ 
-    {
-        "date": "2024-02-09 11:36:00",
-        "estradiol": 50,
-        "testosterone": 15.4,
-        "dosage": Dosage(MedicationType.NO_HRT, 0),
-        "notes": "pre-hrt bloodwork"
-    },
+hormone_data = [
+    # {
+    #     "date": "2024-02-09 11:36:00",
+    #     "estradiol": 50,
+    #     "testosterone": 15.4,
+    #     "dosage": Dosage(MedicationType.NO_HRT, 0),
+    #     "notes": "pre-hrt bloodwork",
+    # },
     {
         "date": "2025-04-03 12:00:00",
         "estradiol": None,
         "testosterone": None,
         "dosage": Dosage(MedicationType.ORAL, 6),
-        "notes": "e2 pills"
+        "notes": "e2 pills",
     },
     #   {
     #     "date": "2024-02-09 11:36:00",
@@ -49,7 +55,7 @@ hormone_data = [
         "estradiol": 396,
         "testosterone": 2.1,
         "dosage": None,
-        "notes": None
+        "notes": None,
     },
     {
         "date": "2025-04-17 12:00:00",
@@ -165,9 +171,8 @@ hormone_data = [
         "estradiol": 1294,
         "testosterone": 2.2,
         "dosage": None,
-        "notes": None
+        "notes": None,
     },
-
     {
         "date": "2025-08-28 12:00:00",
         "estradiol": None,
@@ -187,15 +192,22 @@ hormone_data = [
         "estradiol": 684,
         "testosterone": 1.7,
         "dosage": None,
-        "notes": None
+        "notes": None,
     },
     {
         "date": "2025-09-13 13:58:00",
         "estradiol": 1460,
         "testosterone": 1.7,
         "dosage": None,
-        "notes": None
-    }
+        "notes": None,
+    },
+    {
+        "date": "2026-01-08 12:50:00",
+        "estradiol": 746,
+        "testosterone": 1.8,
+        "dosage": None,
+        "notes": "smoking cigs regularly, stims binge :)",
+    },
 ]
 
 
@@ -230,16 +242,22 @@ def prepare_dosage_data(df):
 
     # group by medication type
     dosage_by_type = {}
-    
+
     current_dosage = None
     current_type = None
 
     for _, row in df_sorted.iterrows():
         if pd.notna(row["dosage_filled"]):
             dosage_obj = row["dosage_filled"]
-            dosage_amount = dosage_obj.amount_mg if isinstance(dosage_obj, Dosage) else dosage_obj
-            med_type = dosage_obj.medication_type if isinstance(dosage_obj, Dosage) else MedicationType.ESTRADIOL_VALERATE
-            
+            dosage_amount = (
+                dosage_obj.amount_mg if isinstance(dosage_obj, Dosage) else dosage_obj
+            )
+            med_type = (
+                dosage_obj.medication_type
+                if isinstance(dosage_obj, Dosage)
+                else MedicationType.ESTRADIOL_VALERATE
+            )
+
             # check if medication type changed (switching medications)
             if current_type is not None and current_type != med_type:
                 # set previous medication to 0 at the switch date
@@ -247,12 +265,12 @@ def prepare_dosage_data(df):
                     dosage_by_type[current_type] = {"dates": [], "values": []}
                 dosage_by_type[current_type]["dates"].append(row["date"])
                 dosage_by_type[current_type]["values"].append(0)
-            
+
             # check if dosage or type changed
             if current_dosage != dosage_amount or current_type != med_type:
                 if med_type not in dosage_by_type:
                     dosage_by_type[med_type] = {"dates": [], "values": []}
-                
+
                 dosage_by_type[med_type]["dates"].append(row["date"])
                 dosage_by_type[med_type]["values"].append(dosage_amount)
                 current_dosage = dosage_amount
@@ -264,32 +282,32 @@ def prepare_dosage_data(df):
 def generate_injection_schedule_with_steady_state(df):
     """Generate injection schedule dates accounting for steady-state accumulation"""
     complete_injections = generate_complete_injection_schedule(df)
-    
+
     if not complete_injections:
         return {"trough": [], "peak": [], "mid": []}
-    
+
     schedule = {
         "trough": [],  # dates of next injections (trough timing)
-        "peak": [],   # dates with highest predicted values  
-        "mid": [],    # dates with 50% predicted values
+        "peak": [],  # dates with highest predicted values
+        "mid": [],  # dates with 50% predicted values
     }
-    
+
     # calculate cycle points for each injection
     for i, (injection_date, dosage) in enumerate(complete_injections):
         # skip oral medications
         if dosage.medication_type == MedicationType.ORAL:
             continue
-            
+
         injection_history = complete_injections[:i]
-        
+
         cycle_points = calculate_cycle_points_for_injection(
             injection_date, dosage, injection_history
         )
-        
-        schedule["trough"].append(cycle_points['trough_date'])
-        schedule["peak"].append(cycle_points['peak_date'])  
-        schedule["mid"].append(cycle_points['mid_date'])
-    
+
+        schedule["trough"].append(cycle_points["trough_date"])
+        schedule["peak"].append(cycle_points["peak_date"])
+        schedule["mid"].append(cycle_points["mid_date"])
+
     return schedule
 
 
@@ -306,44 +324,44 @@ def get_dosage_at_date(target_date, df):
 
 def generate_complete_injection_schedule(df):
     """Generate complete injection schedule assuming regular dosing intervals"""
-    injection_rows = df[df['dosage'].notna()].sort_values('date')
-    
+    injection_rows = df[df["dosage"].notna()].sort_values("date")
+
     if injection_rows.empty:
         return []
-    
+
     complete_schedule = []
-    
+
     for i, (_, row) in enumerate(injection_rows.iterrows()):
-        start_date = row['date']
-        dosage = row['dosage']
-        
+        start_date = row["date"]
+        dosage = row["dosage"]
+
         # determine end date for this dosage period
         if i < len(injection_rows) - 1:
-            end_date = injection_rows.iloc[i + 1]['date']
+            end_date = injection_rows.iloc[i + 1]["date"]
         else:
             # for the last dosage, extend to end of data + some buffer
-            end_date = df['date'].max() + timedelta(days=30)
-        
+            end_date = df["date"].max() + timedelta(days=30)
+
         # generate regular injections for this period
         current_date = start_date
         while current_date < end_date:
             complete_schedule.append((current_date, dosage))
             current_date += timedelta(days=dosage.interval_days)
-    
+
     return complete_schedule
 
 
 def categorize_bloodwork_by_steady_state_cycle(test_dt, df):
     """Categorize a bloodwork date based on steady-state cycle points"""
     complete_injections = generate_complete_injection_schedule(df)
-    
+
     if not complete_injections:
         return "?"
-    
+
     # find the injection cycle that contains this test date
     relevant_injection = None
     injection_history = []
-    
+
     for inj_date, dosage in complete_injections:
         if inj_date <= test_dt < inj_date + timedelta(days=dosage.interval_days):
             # this is the cycle that contains our test
@@ -352,32 +370,126 @@ def categorize_bloodwork_by_steady_state_cycle(test_dt, df):
         elif inj_date < test_dt:
             # this injection happened before our test, add to history
             injection_history.append((inj_date, dosage))
-    
+
     if relevant_injection is None:
         return "?"
-    
+
     injection_date, dosage = relevant_injection
-    
+
     cycle_points = calculate_cycle_points_for_injection(
         injection_date, dosage, injection_history
     )
-    
+
     # special case: injection day should always be considered trough
     # give some leniency (within some hours of injection = trough)
     hours_since_injection = (test_dt - injection_date).total_seconds() / 3600
     if abs(hours_since_injection) <= 12:
         return "trough"
-    
+
     # find which cycle point the test date is closest to
     distances = {
-        'trough': abs((test_dt - cycle_points['trough_date']).total_seconds()),
-        'peak': abs((test_dt - cycle_points['peak_date']).total_seconds()),
-        'mid': abs((test_dt - cycle_points['mid_date']).total_seconds())
+        "trough": abs((test_dt - cycle_points["trough_date"]).total_seconds()),
+        "peak": abs((test_dt - cycle_points["peak_date"]).total_seconds()),
+        "mid": abs((test_dt - cycle_points["mid_date"]).total_seconds()),
     }
-    
+
     # return the category with the smallest time distance
     return min(distances.items(), key=lambda x: x[1])[0]
 
+
+def detect_data_gaps(df, gap_threshold_days=30):
+    """Detect gaps in data larger than threshold and return break points"""
+    df_with_data = df.dropna(subset=["estradiol", "testosterone"])
+    if df_with_data.empty:
+        return []
+
+    dates = sorted(df_with_data["date"].tolist())
+    breaks = []
+
+    for i in range(len(dates) - 1):
+        gap_days = (dates[i + 1] - dates[i]).days
+        if gap_days > gap_threshold_days:
+            # create break spanning the gap with some padding
+            break_start = dates[i] + timedelta(days=7)  # 7 days after last data
+            break_end = dates[i + 1] - timedelta(days=7)  # 7 days before next data
+            breaks.append((break_start, break_end))
+
+    return breaks
+
+
+def apply_axis_breaks(ax, breaks, break_width=0.02):
+    """Apply visual breaks to an axis"""
+    if not breaks:
+        return
+
+    # get current axis limits
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+
+    # convert break dates to matplotlib date format
+    for break_start, break_end in breaks:
+        break_start_num = mdates.date2num(break_start)
+        break_end_num = mdates.date2num(break_end)
+
+        # add white rectangle to hide the gap
+        break_rect = Rectangle(
+            (break_start_num, ylim[0]),
+            break_end_num - break_start_num,
+            ylim[1] - ylim[0],
+            facecolor="white",
+            edgecolor="black",
+            linewidth=1,
+            zorder=100,
+        )
+        ax.add_patch(break_rect)
+
+        # add zigzag break indicators at the edges
+        break_height = (ylim[1] - ylim[0]) * 0.02
+        y_center = (ylim[1] + ylim[0]) / 2
+
+        # left zigzag
+        ax.plot(
+            [
+                break_start_num - break_width * (xlim[1] - xlim[0]),
+                break_start_num + break_width * (xlim[1] - xlim[0]),
+            ],
+            [y_center - break_height, y_center + break_height],
+            "k-",
+            linewidth=2,
+            zorder=101,
+        )
+        ax.plot(
+            [
+                break_start_num - break_width * (xlim[1] - xlim[0]),
+                break_start_num + break_width * (xlim[1] - xlim[0]),
+            ],
+            [y_center + break_height, y_center - break_height],
+            "k-",
+            linewidth=2,
+            zorder=101,
+        )
+
+        # right zigzag
+        ax.plot(
+            [
+                break_end_num - break_width * (xlim[1] - xlim[0]),
+                break_end_num + break_width * (xlim[1] - xlim[0]),
+            ],
+            [y_center - break_height, y_center + break_height],
+            "k-",
+            linewidth=2,
+            zorder=101,
+        )
+        ax.plot(
+            [
+                break_end_num - break_width * (xlim[1] - xlim[0]),
+                break_end_num + break_width * (xlim[1] - xlim[0]),
+            ],
+            [y_center + break_height, y_center - break_height],
+            "k-",
+            linewidth=2,
+            zorder=101,
+        )
 
 
 # from https://github.com/whsah/estrannaise.js
@@ -385,7 +497,7 @@ def generate_ev_expected_curve(df):
     """Generate expected estradiol valerate response curve using step dosage function"""
     # generate injection schedule (every 7 days from start)
     # get the first injection date from the data
-    first_injection_row = df[df['dosage'].notna()].iloc[0]
+    first_injection_row = df[df["dosage"].notna()].iloc[0]
     start_date = first_injection_row["date"]
     end_date = df["date"].max() + pd.Timedelta(days=14)
 
@@ -408,7 +520,9 @@ def generate_ev_expected_curve(df):
         ]
 
         if valid_dosages.empty:
-            return Dosage(MedicationType.ESTRADIOL_VALERATE, 6)  # default starting dosage
+            return Dosage(
+                MedicationType.ESTRADIOL_VALERATE, 6
+            )  # default starting dosage
 
         return valid_dosages.iloc[-1]["dosage_filled"]
 
@@ -447,23 +561,25 @@ def create_hormone_graph(df):
         lambda date: categorize_bloodwork_by_steady_state_cycle(date, df)
     )
 
+    # detect data gaps for axis breaks
+    axis_breaks = detect_data_gaps(df)
+
     # prepare dosage data
     dosage_by_type = prepare_dosage_data(df)
-    
+
     # define colors for medication types
     medication_colors = {
         MedicationType.NO_HRT: "gray",
         MedicationType.ORAL: "yellow",
         MedicationType.ESTRADIOL_VALERATE: "green",
-        MedicationType.ESTRADIOL_ENANTHATE: "blue", 
-        MedicationType.DUMMY: "purple"
+        MedicationType.ESTRADIOL_ENANTHATE: "blue",
+        MedicationType.DUMMY: "purple",
     }
 
     # generate injection schedule using steady-state calculations
     injection_schedule = generate_injection_schedule_with_steady_state(df)
 
     expected_curve_dates, expected_curve_values = generate_ev_expected_curve(df)
-
 
     # calculate ratio of actual to expected estradiol
     actual_to_expected_ratios = []
@@ -499,9 +615,7 @@ def create_hormone_graph(df):
             expected_value = expected_curve_values[closest_idx]
             ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
 
-            annotation_text = (
-                f"{row['estradiol']:.0f}"
-            )
+            annotation_text = f"{row['estradiol']:.0f}"
             ax1.annotate(
                 annotation_text,
                 xy=(row["date"], row["estradiol"]),
@@ -587,8 +701,8 @@ def create_hormone_graph(df):
     )
     ax1.set_ylabel("Estradiol (pg/mL)", fontweight="bold")
     ax1.set_title("Estradiol Levels by Injection Cycle Position")
-    ax1.legend(loc='upper right')
-    ax1.grid(True, alpha=0.3, axis='y')  # only horizontal grid lines
+    ax1.legend(loc="upper right")
+    ax1.grid(True, alpha=0.3, axis="y")  # only horizontal grid lines
 
     # plot testosterone
     ax2.axhspan(
@@ -607,8 +721,8 @@ def create_hormone_graph(df):
     )
     ax2.set_ylabel("Testosterone (ng/dL)", fontweight="bold")
     ax2.set_title("Testosterone Levels by Injection Cycle Position")
-    ax2.legend(loc='upper right')
-    ax2.grid(True, alpha=0.3, axis='y')  # only horizontal grid lines
+    ax2.legend(loc="upper right")
+    ax2.grid(True, alpha=0.3, axis="y")  # only horizontal grid lines
 
     # plot dosage as step plot by medication type
     if dosage_by_type:
@@ -617,7 +731,7 @@ def create_hormone_graph(df):
             values = data["values"]
             color = medication_colors.get(med_type, "gray")
             med_name = med_type.value.replace("_", " ").title()
-            
+
             ax3.step(
                 dates,
                 values,
@@ -653,8 +767,8 @@ def create_hormone_graph(df):
 
     ax3.set_ylabel("Dosage (mg)", fontweight="bold")
     ax3.set_title("Medication Dosage by Type")
-    ax3.legend(loc='upper right')
-    ax3.grid(True, alpha=0.3, axis='y')  # only horizontal grid lines
+    ax3.legend(loc="upper right")
+    ax3.grid(True, alpha=0.3, axis="y")  # only horizontal grid lines
     ax3.set_ylim(bottom=0)  # start y-axis at 0 for dosage
 
     # plot actual/expected ratio
@@ -691,8 +805,8 @@ def create_hormone_graph(df):
 
     ax4.set_ylabel("Ratio", fontweight="bold")
     ax4.set_title("Actual vs Expected Estradiol Ratio")
-    ax4.legend(loc='upper right')
-    ax4.grid(True, alpha=0.3, axis='y')  # only horizontal grid lines
+    ax4.legend(loc="upper right")
+    ax4.grid(True, alpha=0.3, axis="y")  # only horizontal grid lines
     ax4.set_ylim(bottom=0)  # start y-axis at 0
 
     # add injection schedule markers to all plots
@@ -754,6 +868,11 @@ def create_hormone_graph(df):
     xmax = max([a.get_xlim()[1] for a in (ax1, ax2, ax3, ax4)])
     for a in (ax1, ax2, ax3, ax4):
         a.set_xlim((xmin, xmax))
+
+    # apply axis breaks to all subplots
+    # for ax in (ax1, ax2, ax3, ax4):
+    #     apply_axis_breaks(ax, axis_breaks)
+
     return fig, (ax1, ax2, ax3, ax4)
 
 
@@ -779,7 +898,10 @@ if __name__ == "__main__":
 
         date_str = row["date"].strftime("%Y-%m-%d")
         print(f"{date_str}: {cycle_cat.upper()} (cycle day {cycle_day})")
-        if row['testosterone'] == row['testosterone'] and row['estradiol'] == row['estradiol']:
+        if (
+            row["testosterone"] == row["testosterone"]
+            and row["estradiol"] == row["estradiol"]
+        ):
             target_date = row["date"]
             closest_idx = min(
                 range(len(expected_curve_dates)),
@@ -789,11 +911,13 @@ if __name__ == "__main__":
             )
             expected_value = expected_curve_values[closest_idx]
             ratio = row["estradiol"] / expected_value if expected_value > 0 else 0
-            print(f"  E2: {row['estradiol']:.0f} pg/mL ({round(ratio  * 100)}% of predicted {expected_value:.0f} pg/mL), T: {row['testosterone']:.1f} ng/dL")
-        if pd.notna(row['dosage']):
+            print(
+                f"  E2: {row['estradiol']:.0f} pg/mL ({round(ratio * 100)}% of predicted {expected_value:.0f} pg/mL), T: {row['testosterone']:.1f} ng/dL"
+            )
+        if pd.notna(row["dosage"]):
             print(f"  Dosage change: {row['dosage']}")
-        if row['notes']:
-            print(f"  Note: {row["notes"]}")
+        if row["notes"]:
+            print(f"  Note: {row['notes']}")
         print()
 
     fig, axes = create_hormone_graph(df)
